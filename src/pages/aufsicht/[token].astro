@@ -1,0 +1,9 @@
+---
+import Layout from "../../components/Layout.astro";
+import { SupervisorApp } from "../../components/SupervisorApp.tsx";
+export const prerender = false;
+const { token } = Astro.params;
+---
+<Layout title="Aufsicht" noReferrer={true}>
+  <SupervisorApp client:only="react" token={token ?? ""} />
+</Layout>

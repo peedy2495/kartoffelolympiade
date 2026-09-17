@@ -1,0 +1,27 @@
+---
+// Friendly invitation root: no fake login, points supervisors to their QR link.
+import Layout from "../components/Layout.astro";
+---
+<Layout title="Start">
+  <div class="ko-card mx-auto max-w-2xl p-6 sm:p-8">
+    <h1 class="text-2xl font-bold">Willkommen zur Kartoffelolympiade!</h1>
+    <p class="mt-3 text-base">
+      Vier Disziplinen, zwei Altersgruppen, eine Trophäe aus purem Stolz:
+      Kartoffel-Golf, Hindernisparcours, 7-m-Werfen und Kartoffelschälen.
+    </p>
+    <h2 class="mt-6 text-lg font-bold">Für Aufsichten</h2>
+    <p class="mt-2 text-base">
+      Die Spielleitung legt im Admin-Bereich eine Aufsicht an und zeigt einen
+      QR-Code. Einfach QR-Code scannen oder den Einladungslink öffnen — schon
+      kann es mit der Erfassung losgehen. Der Link enthält euren persönlichen
+      Zugang, bitte nicht weitergeben.
+    </p>
+    <h2 class="mt-6 text-lg font-bold">Für alle anderen</h2>
+    <p class="mt-2 text-base">
+      Zwischenstände und Sieger gibt es live im Admin-Bereich.
+    </p>
+    <div class="mt-6 flex flex-wrap gap-3">
+      <a class="ko-btn ko-btn-primary" href="/admin">Zum Admin-Bereich</a>
+    </div>
+  </div>
+</Layout>

@@ -1,0 +1,57 @@
+---
+// Shared layout: header, centered main (max 1320px), theme toggle, footer.
+import "../styles/global.css";
+
+interface Props {
+  title: string;
+  noReferrer?: boolean;
+}
+const { title, noReferrer = false } = Astro.props;
+---
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    {noReferrer && <meta name="referrer" content="no-referrer" />}
+    <meta name="description" content="Kartoffelolympiade – Wertung für das Kartoffelfest." />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>{title} · Kartoffelolympiade</title>
+    <script is:inline>
+      try {
+        const saved = localStorage.getItem("ko-theme");
+        const systemDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+        if (saved === "dark" || (!saved && systemDark)) {
+          document.documentElement.classList.add("dark");
+        }
+      } catch {}
+    </script>
+  </head>
+  <body class="min-h-screen">
+    <header class="border-b" style="border-color: var(--ko-line); background: var(--ko-surface)">
+      <div class="mx-auto flex max-w-[1320px] items-center gap-3 px-4 py-3">
+        <img src="/favicon.svg" alt="" width="32" height="32" aria-hidden="true" />
+        <a href="/" class="text-lg font-bold tracking-tight">Kartoffelolympiade</a>
+        <nav class="ml-auto flex items-center gap-2" aria-label="Hauptnavigation">
+          <a class="ko-btn" href="/admin">Admin</a>
+          <button id="ko-theme-toggle" class="ko-btn" type="button" aria-label="Farbschema wechseln">◐</button>
+        </nav>
+      </div>
+    </header>
+    <main class="mx-auto w-full max-w-[1320px] px-4 py-6">
+      <slot />
+    </main>
+    <footer class="mx-auto max-w-[1320px] px-4 pb-8">
+      <p class="ko-hint">Kartoffelolympiade · zentrale Wertung · /admin ist öffentlich zugänglich.</p>
+    </footer>
+    <script is:inline>
+      document.getElementById("ko-theme-toggle")?.addEventListener("click", () => {
+        const el = document.documentElement;
+        el.classList.toggle("dark");
+        try {
+          localStorage.setItem("ko-theme", el.classList.contains("dark") ? "dark" : "light");
+        } catch {}
+      });
+    </script>
+  </body>
+</html>

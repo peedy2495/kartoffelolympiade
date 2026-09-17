@@ -1,0 +1,10 @@
+.env.development.local
+.env*.local
+.env
+!.env.example
+node_modules/
+dist/
+.astro/
+.vercel/
+artifacts/
+!artifacts/.gitkeep
