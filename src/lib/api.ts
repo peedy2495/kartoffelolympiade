@@ -79,7 +79,7 @@ export const supervisorApi = {
       revision: number;
       name?: string;
       age_group?: AgeGroup;
-      results?: Partial<Record<Discipline, number>>;
+      results?: Partial<Record<Discipline, number | null>>;
     },
   ) =>
     req<Participant>(`/api/participants/${encodeURIComponent(id)}`, {

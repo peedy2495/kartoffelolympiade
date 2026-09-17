@@ -1,4 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  ArrowPathIcon,
+  ClockIcon,
+  PauseIcon,
+} from "@heroicons/react/24/outline";
 import type {
   AgeGroup,
   Discipline,
@@ -221,6 +226,16 @@ export function SupervisorApp({ token }: { token: string }) {
   const baseRevision = useRef(0);
   const baseSnapshot = useRef<EditorFields>(EMPTY);
   const chain = useRef<Promise<void>>(Promise.resolve());
+  // Generation counters: editorGen identifies the selected participant session,
+  // fieldGen tracks per-field edit order, pending counts in-flight writes.
+  // Refs are updated synchronously in the edit path so rapid clicks and async
+  // callbacks never observe stale values.
+  const editorGen = useRef(0);
+  const editCounter = useRef(0);
+  const fieldGen = useRef<Record<FieldKey, number>>({
+    name: 0, age: 0, golf: 0, obstacle: 0, throwing: 0, peeling: 0,
+  });
+  const pendingWrites = useRef(0);
   const dirtyRef = useRef(dirty);
   dirtyRef.current = dirty;
   const fieldsRef = useRef(fields);
@@ -245,24 +260,45 @@ export function SupervisorApp({ token }: { token: string }) {
       try {
         const s = await supervisorApi.state(token);
         setServer((prev) => {
-          // Merge: never overwrite dirty editor fields silently.
+          // Merge: never overwrite dirty editor fields or pending writes.
           const selId = selectedRef.current;
           const d = dirtyRef.current;
-          if (selId && d.size > 0) {
-            const prevRec = prev?.participants.find((p) => p.id === selId);
-            const nextRec = s.participants.find((p) => p.id === selId);
-            if (nextRec && prevRec && nextRec.revision !== baseRevision.current) {
-              setConflict(true);
-            }
-          } else if (selId) {
+          if (selId) {
             const nextRec = s.participants.find((p) => p.id === selId);
             if (nextRec) {
-              baseRevision.current = nextRec.revision;
-              const fresh = serverFields(nextRec, s.results);
-              baseSnapshot.current = fresh;
-              setFields(fresh);
-              setDirty(new Set());
-              setFieldErrors({});
+              // Ignore late/stale polls older than the accepted revision.
+              if (nextRec.revision < baseRevision.current) return s;
+              if (d.size > 0 || pendingWrites.current > 0) {
+                // Own in-flight updates may already be visible server-side;
+                // never raise a false conflict while a write is pending.
+                if (
+                  pendingWrites.current === 0 &&
+                  nextRec.revision !== baseRevision.current
+                ) {
+                  const prevRec = prev?.participants.find((p) => p.id === selId);
+                  if (prevRec && nextRec.revision !== prevRec.revision) {
+                    setConflict(true);
+                  } else if (!prevRec) {
+                    setConflict(true);
+                  }
+                }
+                return s;
+              }
+              if (nextRec.revision !== baseRevision.current) {
+                baseRevision.current = nextRec.revision;
+                const fresh = serverFields(nextRec, s.results);
+                baseSnapshot.current = fresh;
+                setFields((cur) => {
+                  fieldsRef.current = fresh;
+                  return fresh;
+                });
+                setDirty((prevDirty) => {
+                  const n = new Set<FieldKey>();
+                  dirtyRef.current = n;
+                  return n;
+                });
+                setFieldErrors({});
+              }
             }
           }
           return s;
@@ -327,16 +363,20 @@ export function SupervisorApp({ token }: { token: string }) {
 
   function editField(key: FieldKey, value: string | AgeGroup | null) {
     if (!collectionOpen) return;
-    setFields((f) => ({ ...f, [key]: value }) as EditorFields);
-    setDirty((d) => {
-      const n = new Set(d);
-      // Compare against snapshot; clear flag when back to saved value.
-      const snap = baseSnapshot.current[key];
-      const same = snap === (value as string);
-      if (same) n.delete(key);
-      else n.add(key);
-      return n;
-    });
+    const next = { ...fieldsRef.current, [key]: value } as EditorFields;
+    // Synchronous ref update: rapid stepper clicks and async callbacks read
+    // the latest value even before React re-renders.
+    fieldsRef.current = next;
+    editCounter.current += 1;
+    fieldGen.current[key] = editCounter.current;
+    setFields(next);
+    const snap = baseSnapshot.current[key];
+    const same = snap === (value as string);
+    const nd = new Set(dirtyRef.current);
+    if (same) nd.delete(key);
+    else nd.add(key);
+    dirtyRef.current = nd;
+    setDirty(nd);
     setFieldErrors((fe) => ({ ...fe, [key]: undefined }));
     setSaveStatus("idle");
     setConflict(false);
@@ -346,21 +386,33 @@ export function SupervisorApp({ token }: { token: string }) {
     (onlyKeys?: Set<FieldKey>) => {
       const run = async () => {
         const selId = selectedRef.current;
-        const keys = onlyKeys ?? dirtyRef.current;
+        const gen = editorGen.current;
+        const keys = onlyKeys ?? new Set(dirtyRef.current);
         if (!selId || keys.size === 0) return;
-        const f = fieldsRef.current;
+        const f = { ...fieldsRef.current };
+        // Snapshot per-field edit generations + exact sent values at send time.
+        const sentGen = { ...fieldGen.current };
         const errs: Partial<Record<FieldKey, string>> = {};
-        const results: Partial<Record<Discipline, number>> = {};
+        const results: Partial<Record<Discipline, number | null>> = {};
+        // Normalized baseline for sent keys: snapshot advances to what was
+        // SENT, never to newer concurrent edits.
+        const sentBase: Partial<EditorFields> = {};
         let name: string | undefined;
         let age: AgeGroup | undefined;
         if (keys.has("name")) {
           const t = f.name.trim().replace(/\s+/g, " ");
           if (t.length < 1 || t.length > 100) errs.name = "Name muss 1–100 Zeichen haben.";
-          else if (t !== baseSnapshot.current.name) name = t;
+          else if (t !== baseSnapshot.current.name) {
+            name = t;
+            sentBase.name = t;
+          }
         }
         if (keys.has("age")) {
           if (f.age === null) errs.age = "Bitte Altersgruppe wählen.";
-          else if (f.age !== baseSnapshot.current.age) age = f.age;
+          else if (f.age !== baseSnapshot.current.age) {
+            age = f.age;
+            sentBase.age = f.age;
+          }
         }
         for (const d of ["golf", "obstacle", "throwing", "peeling"] as Discipline[]) {
           if (!keys.has(d)) continue;
@@ -374,6 +426,14 @@ export function SupervisorApp({ token }: { token: string }) {
                   : "Sekunden mit höchstens einer Nachkommastelle, z. B. 12,3.";
           } else if (parsed.value !== null) {
             results[d] = parsed.value;
+            sentBase[d] =
+              d === "obstacle" || d === "peeling"
+                ? formatTenthsToGerman(parsed.value)
+                : String(parsed.value);
+          } else {
+            // Blank is a valid clear (explicit null), distinct from invalid text.
+            results[d] = null;
+            sentBase[d] = "";
           }
         }
         if (Object.keys(errs).length > 0) {
@@ -383,43 +443,54 @@ export function SupervisorApp({ token }: { token: string }) {
           return;
         }
         if (name === undefined && age === undefined && Object.keys(results).length === 0) {
-          setDirty((d) => {
-            const n = new Set(d);
-            for (const k of keys) n.delete(k);
-            return n;
-          });
+          const n = new Set(dirtyRef.current);
+          for (const k of keys) n.delete(k);
+          dirtyRef.current = n;
+          setDirty(n);
           return;
         }
+        const sentRevision = baseRevision.current;
         setSaveStatus("saving");
         setSaveError(null);
+        pendingWrites.current += 1;
         try {
           const updated = await supervisorApi.patch(token, selId, {
-            revision: baseRevision.current,
+            revision: sentRevision,
             ...(name !== undefined ? { name } : {}),
             ...(age !== undefined ? { age_group: age } : {}),
             ...(Object.keys(results).length > 0 ? { results } : {}),
           });
-          baseRevision.current = updated.revision;
-          // Refresh snapshot for saved keys only.
-          setFields((cur) => {
-            const snap = { ...baseSnapshot.current };
-            if (name !== undefined) snap.name = updated.name;
-            if (age !== undefined) snap.age = updated.ageGroup;
-            for (const d of Object.keys(results) as Discipline[]) {
-              snap[d] = cur[d];
-            }
-            baseSnapshot.current = snap;
-            return cur;
-          });
-          setDirty((d) => {
-            const n = new Set(d);
-            for (const k of keys) n.delete(k);
-            return n;
-          });
+          // Late response for a previous participant session never mutates
+          // the new editor.
+          if (selectedRef.current !== selId || editorGen.current !== gen) return;
+          if (updated.revision > baseRevision.current) {
+            baseRevision.current = updated.revision;
+          }
+          // Advance the baseline to SENT values only.
+          const snap = { ...baseSnapshot.current, ...sentBase };
+          if (name !== undefined) snap.name = updated.name;
+          if (age !== undefined) snap.age = updated.ageGroup;
+          baseSnapshot.current = snap;
+          // Clear dirty only for fields unchanged since send (generation
+          // compare); newer edits stay dirty and requeue through the chain.
+          const n = new Set(dirtyRef.current);
+          for (const k of keys) {
+            if (fieldGen.current[k] === sentGen[k]) n.delete(k);
+          }
+          dirtyRef.current = n;
+          setDirty(n);
           setConflict(false);
-          setSaveStatus("saved");
-          await load(true);
+          setSaveStatus(n.size > 0 ? "idle" : "saved");
+          if (n.size > 0) {
+            // Newer edits arrived mid-flight: requeue them through the
+            // serialized chain so nothing is lost.
+            flush(new Set(n));
+          } else {
+            await load(true);
+          }
         } catch (e) {
+          // Late failure for a previous participant session: ignore.
+          if (selectedRef.current !== selId || editorGen.current !== gen) return;
           const code = (e as { code?: string }).code;
           if (code === "STALE") {
             setConflict(true);
@@ -437,6 +508,8 @@ export function SupervisorApp({ token }: { token: string }) {
             setSaveStatus("error");
             setSaveError(e instanceof Error ? e.message : "Speichern fehlgeschlagen. Eingaben bleiben erhalten.");
           }
+        } finally {
+          pendingWrites.current = Math.max(0, pendingWrites.current - 1);
         }
       };
       chain.current = chain.current.then(run, run);
@@ -459,9 +532,14 @@ export function SupervisorApp({ token }: { token: string }) {
 
   function selectParticipant(id: string | null) {
     if (id !== selectedId && !confirmAbandonTimers()) return;
+    // Lifecycle timer stops only; they never clear stored fields.
     swObstacle.reset();
     swPeeling.reset();
     cdThrow.reset();
+    // New editor session: late responses/queued work for the old participant
+    // must never mutate the new editor.
+    editorGen.current += 1;
+    selectedRef.current = id;
     setConflict(false);
     setSaveError(null);
     setFinalizeError(null);
@@ -469,8 +547,11 @@ export function SupervisorApp({ token }: { token: string }) {
     setCreating(false);
     if (id === null) {
       setSelectedId(null);
+      fieldsRef.current = EMPTY;
+      const n = new Set<FieldKey>();
+      dirtyRef.current = n;
       setFields(EMPTY);
-      setDirty(new Set());
+      setDirty(n);
       return;
     }
     const rec = server?.participants.find((p) => p.id === id);
@@ -478,8 +559,11 @@ export function SupervisorApp({ token }: { token: string }) {
     baseRevision.current = rec.revision;
     const fresh = serverFields(rec, server.results);
     baseSnapshot.current = fresh;
+    fieldsRef.current = fresh;
+    const n = new Set<FieldKey>();
+    dirtyRef.current = n;
     setFields(fresh);
-    setDirty(new Set());
+    setDirty(n);
     setFieldErrors({});
     setSelectedId(id);
   }
@@ -507,11 +591,16 @@ export function SupervisorApp({ token }: { token: string }) {
       setNewAge(null);
       setCreating(false);
       await load(true);
+      editorGen.current += 1;
+      selectedRef.current = created.id;
       baseRevision.current = created.revision;
       const fresh: EditorFields = { ...EMPTY, name: created.name, age: created.ageGroup };
       baseSnapshot.current = fresh;
+      fieldsRef.current = fresh;
+      const n = new Set<FieldKey>();
+      dirtyRef.current = n;
       setFields(fresh);
-      setDirty(new Set());
+      setDirty(n);
       setFieldErrors({});
       setSelectedId(created.id);
       setSaveStatus("idle");
@@ -724,6 +813,7 @@ export function SupervisorApp({ token }: { token: string }) {
           participant={selected}
           fields={fields}
           snapshot={baseSnapshot.current}
+          attribution={server.results[selected.id] ?? {}}
           fieldErrors={fieldErrors}
           collectionOpen={collectionOpen}
           saveError={saveError}
@@ -738,8 +828,11 @@ export function SupervisorApp({ token }: { token: string }) {
               baseRevision.current = rec.revision;
               const fresh = serverFields(rec, server.results);
               baseSnapshot.current = fresh;
+              fieldsRef.current = fresh;
+              const n = new Set<FieldKey>();
+              dirtyRef.current = n;
               setFields(fresh);
-              setDirty(new Set());
+              setDirty(n);
               setFieldErrors({});
               setConflict(false);
               setSaveStatus("idle");
@@ -764,6 +857,7 @@ function EditorView(props: {
   participant: Participant;
   fields: EditorFields;
   snapshot: EditorFields;
+  attribution: Partial<Record<Discipline, { supervisorName: string | null }>>;
   fieldErrors: Partial<Record<FieldKey, string>>;
   collectionOpen: boolean;
   saveError: string | null;
@@ -799,6 +893,7 @@ function EditorView(props: {
         </span>
         {!sw.running ? (
           <button type="button" className="ko-btn" disabled={disabled} onClick={sw.start}>
+            <ClockIcon className="mr-1 inline h-5 w-5" aria-hidden="true" />
             Start
           </button>
         ) : (
@@ -811,21 +906,33 @@ function EditorView(props: {
               props.onEdit(key, formatTenthsToGerman(tenths));
             }}
           >
+            <PauseIcon className="mr-1 inline h-5 w-5" aria-hidden="true" />
             Pause
           </button>
         )}
         <button
           type="button"
           className="ko-btn"
+          disabled={disabled}
           onClick={() => {
             sw.reset();
-            // Reset stops the clock and returns the field to the saved value (or blank).
-            props.onEdit(key, props.snapshot[key]);
+            // Explicit reset clears the stored value (persists via null).
+            props.onEdit(key, "");
           }}
         >
+          <ArrowPathIcon className="mr-1 inline h-5 w-5" aria-hidden="true" />
           Zurücksetzen
         </button>
       </div>
+    );
+  }
+
+  function attributionLine(d: Discipline) {
+    const name = props.attribution[d]?.supervisorName ?? null;
+    return (
+      <p className="ko-hint mt-1" data-testid={`attribution-${d}`}>
+        {name ? `Zuletzt erfasst von: ${name}` : "Noch kein Eintrag"}
+      </p>
     );
   }
 
@@ -907,6 +1014,7 @@ function EditorView(props: {
       <section className="ko-card p-4 sm:p-5" aria-label={DISCIPLINE_LABELS_DE.golf}>
         <h3 className="text-lg font-bold">1. {DISCIPLINE_LABELS_DE.golf}</h3>
         <p className="ko-hint">Schläge — ganze Zahl ab 1.</p>
+        {attributionLine("golf")}
         <div className="mt-2 flex items-center gap-2">
           <button
             type="button"
@@ -949,7 +1057,8 @@ function EditorView(props: {
 
       <section className="ko-card p-4 sm:p-5" aria-label={DISCIPLINE_LABELS_DE.obstacle}>
         <h3 className="text-lg font-bold">2. {DISCIPLINE_LABELS_DE.obstacle}</h3>
-        <p className="ko-hint">Sekunden, z. B. 12,3 — oder Stoppuhr nutzen.</p>
+        <p className="ko-hint">Sekunden, z. B. 12,3 — oder Stoppuhr nutzen. Nur „Zurücksetzen“ löscht den gespeicherten Wert.</p>
+        {attributionLine("obstacle")}
         <input
           className="ko-input mt-2"
           data-testid="field-obstacle"
@@ -967,7 +1076,8 @@ function EditorView(props: {
 
       <section className="ko-card p-4 sm:p-5" aria-label={DISCIPLINE_LABELS_DE.throwing}>
         <h3 className="text-lg font-bold">3. {DISCIPLINE_LABELS_DE.throwing}</h3>
-        <p className="ko-hint">Treffer — ganze Zahl ab 0. Der Countdown verändert die Treffer nie automatisch.</p>
+        <p className="ko-hint">Treffer — ganze Zahl ab 0. Der Countdown zählt nur die Zeit herunter und verändert die Treffer nie automatisch; nur „Zurücksetzen“ löscht den gespeicherten Wert.</p>
+        {attributionLine("throwing")}
         <div className="mt-2 flex items-center gap-2">
           <button
             type="button"
@@ -976,7 +1086,7 @@ function EditorView(props: {
             disabled={disabled}
             onClick={() => {
               const p = parseCount(fields.throwing, 0);
-              props.onEdit("throwing", String(Math.max(0, (p.value ?? 1) - 1)));
+              props.onEdit("throwing", String(Math.max(0, (p.value ?? 0) - 1)));
             }}
           >
             −
@@ -999,7 +1109,7 @@ function EditorView(props: {
             disabled={disabled}
             onClick={() => {
               const p = parseCount(fields.throwing, 0);
-              props.onEdit("throwing", String((p.value ?? -1) + 1));
+              props.onEdit("throwing", String((p.value ?? 0) + 1));
             }}
           >
             +
@@ -1014,14 +1124,26 @@ function EditorView(props: {
           </span>
           {!props.cdThrow.running ? (
             <button type="button" className="ko-btn" disabled={disabled} onClick={props.cdThrow.start}>
+              <ClockIcon className="mr-1 inline h-5 w-5" aria-hidden="true" />
               {props.cdThrow.finished || props.cdThrow.remaining < 60_000 ? "Erneut starten (60 s)" : "Countdown starten (60 s)"}
             </button>
           ) : (
             <button type="button" className="ko-btn" onClick={props.cdThrow.pause}>
+              <PauseIcon className="mr-1 inline h-5 w-5" aria-hidden="true" />
               Pause
             </button>
           )}
-          <button type="button" className="ko-btn" onClick={props.cdThrow.reset}>
+          <button
+            type="button"
+            className="ko-btn"
+            disabled={disabled}
+            onClick={() => {
+              props.cdThrow.reset();
+              // Explicit reset clears the stored throwing value (persists via null).
+              props.onEdit("throwing", "");
+            }}
+          >
+            <ArrowPathIcon className="mr-1 inline h-5 w-5" aria-hidden="true" />
             Zurücksetzen
           </button>
         </div>
@@ -1029,7 +1151,8 @@ function EditorView(props: {
 
       <section className="ko-card p-4 sm:p-5" aria-label={DISCIPLINE_LABELS_DE.peeling}>
         <h3 className="text-lg font-bold">4. {DISCIPLINE_LABELS_DE.peeling}</h3>
-        <p className="ko-hint">Sekunden, z. B. 45,0 — oder Stoppuhr nutzen.</p>
+        <p className="ko-hint">Sekunden, z. B. 45,0 — oder Stoppuhr nutzen. Nur „Zurücksetzen“ löscht den gespeicherten Wert.</p>
+        {attributionLine("peeling")}
         <input
           className="ko-input mt-2"
           data-testid="field-peeling"

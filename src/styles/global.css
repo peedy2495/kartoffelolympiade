@@ -176,3 +176,29 @@ body {
   max-height: 88vh;
   overflow: auto;
 }
+
+/* Theme toggle: same control height as .ko-btn, fixed 44px target. */
+.ko-theme-toggle {
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.ko-theme-toggle svg {
+  width: 22px;
+  height: 22px;
+  flex: none;
+}
+
+/* Refresh tooltip: hidden until the button is hovered or keyboard-focused. */
+.ko-tip {
+  opacity: 0;
+  transition: opacity 150ms;
+}
+.ko-tip-anchor:hover .ko-tip,
+.ko-tip-anchor:focus-within .ko-tip {
+  opacity: 1;
+}

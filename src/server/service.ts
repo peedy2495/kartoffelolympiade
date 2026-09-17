@@ -308,15 +308,20 @@ export interface PatchBody {
 
 function parsePatchResults(
   input: unknown,
-): Partial<Record<Discipline, number>> | null {
+): Partial<Record<Discipline, number | null>> | null {
   if (input === undefined) return null;
   if (typeof input !== "object" || input === null || Array.isArray(input))
     throw err(400, "INVALID", "results muss ein Objekt sein.");
-  const out: Partial<Record<Discipline, number>> = {};
+  const out: Partial<Record<Discipline, number | null>> = {};
   for (const [k, v] of Object.entries(input as Record<string, unknown>)) {
     if (!DISCIPLINES.includes(k as Discipline))
       throw err(400, "INVALID", `Unbekannte Disziplin: ${k}.`);
-    if (v === null || v === undefined) continue;
+    if (v === undefined) continue;
+    // Explicit null means remove the stored result (DELETE in the same write).
+    if (v === null) {
+      out[k as Discipline] = null;
+      continue;
+    }
     const d = k as Discipline;
     if (!validateStoredValue(d, v))
       throw err(400, "INVALID", `Ungültiger Wert für ${d}.`);
@@ -356,7 +361,6 @@ export async function supervisorPatchParticipant(
     if (typeof v === "number" && (v < 0 || v > MAX_INPUT_VALUE))
       throw err(400, "INVALID", "Wert außerhalb des Bereichs.");
   }
-
   const tx = await beginWrite(db as Client);
   let committed = false;
   try {
@@ -378,13 +382,22 @@ export async function supervisorPatchParticipant(
       cleanResults !== null
         ? await findResultsForParticipant(tx, participantId)
         : {};
-    const changedResults: Array<[Discipline, number]> =
-      cleanResults !== null
-        ? (
-            Object.entries(cleanResults) as Array<[Discipline, number]>
-          ).filter(([d, v]) => current[d]?.value !== v)
-        : [];
-    if (!metaChanged && changedResults.length === 0) {
+    const changedResults: Array<[Discipline, number]> = [];
+    const clearedResults: Discipline[] = [];
+    if (cleanResults !== null) {
+      for (const [d, v] of Object.entries(cleanResults) as Array<
+        [Discipline, number | null]
+      >) {
+        if (v === null) {
+          // Explicit clear: only a present row needs deletion; clearing an
+          // absent value is a no-op and invents no attribution.
+          if (current[d]?.value !== undefined) clearedResults.push(d);
+        } else if (current[d]?.value !== v) {
+          changedResults.push([d, v]);
+        }
+      }
+    }
+    if (!metaChanged && changedResults.length === 0 && clearedResults.length === 0) {
       // No-op patch: touch nothing, return current record.
       committed = true;
       await endTx(tx, true);
@@ -397,11 +410,17 @@ export async function supervisorPatchParticipant(
     });
     if ((upd.rowsAffected ?? 0) === 0)
       throw err(409, "STALE", "Veraltete revision — bitte neu laden.");
-    // Only actually changed result values update attribution.
+    // Only actually changed result values update attribution; clears delete.
     for (const [d, v] of changedResults) {
       await tx.execute({
         sql: "INSERT INTO ko_results (participant_id, discipline, value, supervisor_id, supervisor_name, updated_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (participant_id, discipline) DO UPDATE SET value = excluded.value, supervisor_id = excluded.supervisor_id, supervisor_name = excluded.supervisor_name, updated_at = excluded.updated_at",
         args: [participantId, d, v, sup.id, sup.name, now],
+      });
+    }
+    for (const d of clearedResults) {
+      await tx.execute({
+        sql: "DELETE FROM ko_results WHERE participant_id = ? AND discipline = ?",
+        args: [participantId, d],
       });
     }
     const updated = await findParticipant(tx, participantId);

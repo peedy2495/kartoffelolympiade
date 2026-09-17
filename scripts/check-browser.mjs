@@ -364,14 +364,16 @@ try {
   await supA.keyboard.press("Tab"); // blur -> autosave
   await typeInto(supA, "field-obstacle", "12,3");
   await supA.evaluate(() => document.querySelector('[data-testid="field-obstacle"]').blur());
-  // Throwing stepper: blank -> + -> 0 -> + -> 1 -> + -> 2.
+  // Throwing stepper: blank treated as 0, first + yields 1, minus floors 0.
   await supA.evaluate(() => { [...document.querySelectorAll("button")].find((b) => b.getAttribute("aria-label") === "Treffer erhöhen").click(); });
+  const throwingFirst = await supA.$eval('[data-testid="field-throwing"]', (el) => el.value);
+  check("rapid + from blank starts at 1", throwingFirst === "1", `got "${throwingFirst}"`);
   await supA.evaluate(() => { [...document.querySelectorAll("button")].find((b) => b.getAttribute("aria-label") === "Treffer erhöhen").click(); });
   await supA.evaluate(() => { [...document.querySelectorAll("button")].find((b) => b.getAttribute("aria-label") === "Treffer erhöhen").click(); });
   const throwingVal = await supA.$eval('[data-testid="field-throwing"]', (el) => el.value);
-  check("throwing stepper reaches 2", throwingVal === "2", `got "${throwingVal}"`);
+  check("throwing stepper reaches 3 after three rapid clicks", throwingVal === "3", `got "${throwingVal}"`);
 
-  // ---- stopwatch: start/pause/reset on peeling, then keyboard value ----
+  // ---- stopwatch: start/pause/reset on peeling clears the stored value ----
   await supA.evaluate(() => {
     const box = document.querySelector('[data-testid="stopwatch-peeling"]');
     [...box.querySelectorAll("button")].find((b) => b.textContent.includes("Start")).click();
@@ -390,11 +392,11 @@ try {
   });
   await new Promise((r) => setTimeout(r, 300));
   const resetField = await supA.$eval('[data-testid="field-peeling"]', (el) => el.value);
-  check("stopwatch measures from clock and resets field", Boolean(progressed) && pausedField !== "" && resetField === "", `${watchText} pause->${pausedField} reset->blank`);
+  check("stopwatch measures from clock, explicit reset clears field", Boolean(progressed) && pausedField !== "" && resetField === "", `${watchText} pause->${pausedField} reset->blank`);
   await typeInto(supA, "field-peeling", "45,0");
   await supA.evaluate(() => document.querySelector('[data-testid="field-peeling"]').blur());
 
-  // ---- countdown: start/pause/reset, hits untouched ----
+  // ---- countdown: start/pause/reset, explicit reset clears hits + restores 60s ----
   const hitsBefore = await supA.$eval('[data-testid="field-throwing"]', (el) => el.value);
   await supA.evaluate(() => {
     const box = document.querySelector('[data-testid="countdown-throwing"]');
@@ -415,10 +417,15 @@ try {
   const cdReset = await supA.$eval('[data-testid="countdown-display"]', (el) => el.textContent);
   const hitsAfter = await supA.$eval('[data-testid="field-throwing"]', (el) => el.value);
   check(
-    "60s countdown ticks/pauses/resets, hits untouched (no full-minute wait)",
-    cdText !== null && !cdText.includes("60,0") && cdReset.includes("60,0") && hitsBefore === hitsAfter,
-    `${cdText} -> ${cdReset}, hits ${hitsBefore}->${hitsAfter}`,
+    "60s countdown ticks/pauses/resets to 60s, explicit reset clears hits (no full-minute wait)",
+    cdText !== null && !cdText.includes("60,0") && cdReset.includes("60,0") && hitsBefore !== "" && hitsAfter === "",
+    `${cdText} -> ${cdReset}, hits ${hitsBefore}->blank`,
   );
+  // Restore throwing for the save flow (reset cleared it by design).
+  // NOTE: value must differ from the last saved one, otherwise there is
+  // correctly nothing to save and the badge stays "Bereit".
+  await typeInto(supA, "field-throwing", "2");
+  await supA.evaluate(() => document.querySelector('[data-testid="field-throwing"]').blur());
 
   // ---- wait for autosave of all values ----
   await supA.waitForFunction(
@@ -427,6 +434,187 @@ try {
   ).catch(() => {});
   const savedState = await supA.$eval('[data-testid="save-status"]', (el) => el.textContent);
   check("all values autosaved", savedState.includes("Gespeichert"), savedState.trim());
+
+  // ---- autosave/poll ordering regressions (tracked interception, no timing luck) ----
+  // Interceptor holds PATCH and/or GET /api/state on demand so response
+  // ordering is controlled deterministically against the REAL app.
+  const netCtl = { holdPatch: false, holdGet: false, heldPatch: [], heldGet: [], patchCount: 0, getCount: 0 };
+  const netHandler = async (req) => {
+    try {
+      const url = new URL(req.url());
+      const isPatch = req.method() === "PATCH" && url.pathname.startsWith("/api/participants/");
+      const isGet = req.method() === "GET" && url.pathname === "/api/state";
+      if (isPatch) {
+        netCtl.patchCount += 1;
+        if (netCtl.holdPatch) {
+          netCtl.heldPatch.push(req);
+          return;
+        }
+      } else if (isGet) {
+        netCtl.getCount += 1;
+        if (netCtl.holdGet) {
+          netCtl.heldGet.push(req);
+          return;
+        }
+      }
+    } catch { /* fall through to continue */ }
+    await req.continue().catch(() => {});
+  };
+  await supA.setRequestInterception(true);
+  supA.on("request", netHandler);
+  async function releaseHeld(kind) {
+    const list = kind === "patch" ? netCtl.heldPatch.splice(0) : netCtl.heldGet.splice(0);
+    for (const req of list) await req.continue().catch(() => {});
+  }
+  async function waitForHeldPatch(timeout = 15000) {
+    const start = Date.now();
+    while (netCtl.heldPatch.length === 0) {
+      if (Date.now() - start > timeout) throw new Error("timed out waiting for held PATCH");
+      await new Promise((r) => setTimeout(r, 100));
+    }
+  }
+  async function waitForHeldGet(timeout = 15000) {
+    const start = Date.now();
+    while (netCtl.heldGet.length === 0) {
+      if (Date.now() - start > timeout) throw new Error("timed out waiting for held GET");
+      await new Promise((r) => setTimeout(r, 100));
+    }
+  }
+  async function waitSaved(timeout = 20000) {
+    await supA.waitForFunction(
+      () => document.body.textContent.includes("Gespeichert"),
+      { timeout },
+    ).catch(() => {});
+  }
+
+  // 1) Edits during a delayed PATCH survive both saves + poll.
+  netCtl.holdPatch = true;
+  const throwingBase = await supA.$eval('[data-testid="field-throwing"]', (el) => el.value);
+  await supA.evaluate(() => { [...document.querySelectorAll("button")].find((b) => b.getAttribute("aria-label") === "Treffer erhöhen").click(); });
+  await waitForHeldPatch();
+  const duringVal = await supA.$eval('[data-testid="field-throwing"]', (el) => el.value);
+  await supA.evaluate(() => { [...document.querySelectorAll("button")].find((b) => b.getAttribute("aria-label") === "Treffer erhöhen").click(); });
+  const latestVal = await supA.$eval('[data-testid="field-throwing"]', (el) => el.value);
+  netCtl.holdPatch = false;
+  await releaseHeld("patch");
+  await waitSaved();
+  await new Promise((r) => setTimeout(r, 3600)); // a full 3s poll passes
+  const survivedVal = await supA.$eval('[data-testid="field-throwing"]', (el) => el.value);
+  check(
+    "edits during delayed PATCH survive both saves and poll",
+    duringVal === String(Number(throwingBase) + 1) && survivedVal === latestVal && latestVal === String(Number(throwingBase) + 2),
+    `${throwingBase} -> during ${duringVal} -> latest ${latestVal} -> after poll ${survivedVal}`,
+  );
+
+  // 2) Late pre-save GET does not roll back the newer value.
+  netCtl.holdGet = true;
+  await waitForHeldGet(); // a poll issued before the edit is now held
+  await supA.evaluate(() => { [...document.querySelectorAll("button")].find((b) => b.getAttribute("aria-label") === "Treffer erhöhen").click(); });
+  const preStaleVal = await supA.$eval('[data-testid="field-throwing"]', (el) => el.value);
+  await waitSaved();
+  netCtl.holdGet = false;
+  await releaseHeld("get"); // stale snapshot arrives after the save
+  await new Promise((r) => setTimeout(r, 800));
+  const afterStaleVal = await supA.$eval('[data-testid="field-throwing"]', (el) => el.value);
+  await waitSaved();
+  check(
+    "late pre-save GET does not roll back newer value",
+    afterStaleVal === preStaleVal,
+    `before stale ${preStaleVal} -> after ${afterStaleVal}`,
+  );
+
+  // 3) Reset while a PATCH is pending stays cleared after save + poll.
+  netCtl.holdPatch = true;
+  await supA.evaluate(() => { [...document.querySelectorAll("button")].find((b) => b.getAttribute("aria-label") === "Treffer erhöhen").click(); });
+  await waitForHeldPatch();
+  await supA.evaluate(() => {
+    const box = document.querySelector('[data-testid="countdown-throwing"]');
+    [...box.querySelectorAll("button")].find((b) => b.textContent.includes("Zurücksetzen")).click();
+  });
+  const resetDuring = await supA.$eval('[data-testid="field-throwing"]', (el) => el.value);
+  netCtl.holdPatch = false;
+  await releaseHeld("patch");
+  await waitSaved();
+  await new Promise((r) => setTimeout(r, 3600));
+  const resetSurvived = await supA.$eval('[data-testid="field-throwing"]', (el) => el.value);
+  const resetCountdown = await supA.$eval('[data-testid="countdown-display"]', (el) => el.textContent);
+  check(
+    "reset during pending PATCH stays blank after save+poll, countdown back at 60s",
+    resetDuring === "" && resetSurvived === "" && resetCountdown.includes("60,0"),
+    `during "${resetDuring}" after "${resetSurvived}" cd "${resetCountdown}"`,
+  );
+  // Server + second supervisor confirm the clear persisted (no restore).
+  const stAfterClear = await adminFetch(admin, "/api/gamemaster/state");
+  const clearedPid = stAfterClear.body.participants.find((p) => p.name === "Lina Browser")?.id;
+  const clearedThrow = stAfterClear.body.results?.[clearedPid]?.throwing?.value;
+  check("cleared throwing persists server-side", clearedThrow === undefined, `server throwing=${clearedThrow}`);
+  await supB.goto(`${BASE}/aufsicht/${tokenB}`, { waitUntil: "networkidle0", timeout: 30000 });
+  await supB.waitForFunction(() => document.body.textContent.includes("Lina Browser"), { timeout: 20000 });
+  await supB.evaluate(() => {
+    const btn = [...document.querySelectorAll("button")].find((b) => (b.textContent || "").includes("Lina Browser"));
+    if (btn) btn.click();
+  });
+  await supB.waitForSelector('[data-testid="field-throwing"]', { timeout: 15000 });
+  await new Promise((r) => setTimeout(r, 1200));
+  const supBThrow = await supB.$eval('[data-testid="field-throwing"]', (el) => el.value);
+  const supBAttr = await supB.$eval('[data-testid="attribution-throwing"]', (el) => el.textContent);
+  check(
+    "second supervisor sees cleared throwing with empty attribution",
+    supBThrow === "" && supBAttr.includes("Noch kein Eintrag"),
+    `field="${supBThrow}" attr="${supBAttr.trim().slice(0, 40)}"`,
+  );
+  // Restore throwing on A for finalize + attribution flow (supB stays in editor).
+  await supA.bringToFront?.();
+  await typeInto(supA, "field-throwing", "5");
+  await supA.evaluate(() => document.querySelector('[data-testid="field-throwing"]').blur());
+  await waitSaved();
+
+  // 4) Distinct per-card attribution after real writes by both supervisors.
+  // Wait until B converged to A's restored value first: otherwise B's save
+  // would (correctly) conflict as STALE instead of succeeding.
+  await supB.bringToFront?.();
+  await supB.waitForFunction(
+    () => document.querySelector('[data-testid="field-throwing"]')?.value === "5",
+    { timeout: 20000 },
+  );
+  await typeInto(supB, "field-throwing", "7");
+  await supB.evaluate(() => document.querySelector('[data-testid="field-throwing"]').blur());
+  await supB.waitForFunction(() => document.body.textContent.includes("Gespeichert"), { timeout: 20000 }).catch(() => {});
+  await new Promise((r) => setTimeout(r, 3600)); // let A's poll pick up B's write
+  await supA.bringToFront?.();
+  const attrThrow = await supA.$eval('[data-testid="attribution-throwing"]', (el) => el.textContent);
+  const attrGolf = await supA.$eval('[data-testid="attribution-golf"]', (el) => el.textContent);
+  const attrObst = await supA.$eval('[data-testid="attribution-obstacle"]', (el) => el.textContent);
+  const attrPeel = await supA.$eval('[data-testid="attribution-peeling"]', (el) => el.textContent);
+  check(
+    "per-card attribution identifies distinct supervisors after real writes",
+    attrThrow.includes("Ben Aufsicht") && attrGolf.includes("Anna Aufsicht") &&
+      attrObst.includes("Anna Aufsicht") && attrPeel.includes("Anna Aufsicht"),
+    `golf=${attrGolf.trim().slice(0, 34)} obst=${attrObst.trim().slice(0, 34)} throw=${attrThrow.trim().slice(0, 34)} peel=${attrPeel.trim().slice(0, 34)}`,
+  );
+  // A's editor converged to B's throwing value without conflict banner.
+  const convergedThrow = await supA.$eval('[data-testid="field-throwing"]', (el) => el.value);
+  check("clean remote update converges without blind overwrite", convergedThrow === "7", `got "${convergedThrow}"`);
+  // Timer/countdown buttons: icons present, text retained.
+  const timerIcons = await supA.evaluate(() => {
+    const boxes = ["countdown-throwing", "stopwatch-obstacle", "stopwatch-peeling"]
+      .map((id) => document.querySelector(`[data-testid="${id}"]`))
+      .filter(Boolean);
+    const btns = boxes.flatMap((box) => [...box.querySelectorAll("button")]);
+    return {
+      total: btns.length,
+      withSvg: btns.filter((b) => b.querySelector("svg")).length,
+      hiddenSvg: btns.filter((b) => b.querySelector('svg[aria-hidden="true"]')).length,
+      withText: btns.filter((b) => (b.textContent || "").trim().length > 2).length,
+    };
+  });
+  check(
+    "timer/countdown buttons show aria-hidden icons with retained text",
+    timerIcons.total === 6 && timerIcons.withSvg === 6 && timerIcons.hiddenSvg === 6 && timerIcons.withText === 6,
+    JSON.stringify(timerIcons),
+  );
+  supA.off("request", netHandler);
+  await supA.setRequestInterception(false).catch(() => {});
 
   // ---- supervisor B sees shared draft ----
   await supB.goto(`${BASE}/aufsicht/${tokenB}`, { waitUntil: "networkidle0", timeout: 30000 });
@@ -474,6 +662,45 @@ try {
   check("mobile no horizontal overflow (supervisor)", await noHorizontalOverflow(supA));
   await supA.screenshot({ path: join(shotDir, "supervisor-mobile-light.png") });
 
+  // ---- theme toggle sizing + behavior, product naming ----
+  await admin.setViewport({ width: 1360, height: 900 });
+  await admin.goto(`${BASE}/gamemaster`, { waitUntil: "networkidle0" });
+  await admin.waitForSelector("#ko-theme-toggle", { timeout: 10000 });
+  const themeBox = await admin.$eval("#ko-theme-toggle", (el) => {
+    const r = el.getBoundingClientRect();
+    return { w: r.width, h: r.height };
+  });
+  const themeSvg = await admin.$eval("#ko-theme-toggle", (el) => !!el.querySelector("svg"));
+  const themeLabel = await admin.$eval("#ko-theme-toggle", (el) => el.getAttribute("aria-label") || "");
+  check(
+    "theme toggle is full-sized control with visible icon and action label",
+    themeBox.w >= 44 && themeBox.h >= 44 && themeSvg && /hellen|dunklen/.test(themeLabel),
+    `${themeBox.w}x${themeBox.h} label="${themeLabel}"`,
+  );
+  const darkBefore = await admin.evaluate(() => document.documentElement.classList.contains("dark"));
+  await admin.click("#ko-theme-toggle");
+  await new Promise((r) => setTimeout(r, 400));
+  const darkAfter = await admin.evaluate(() => document.documentElement.classList.contains("dark"));
+  const labelAfter = await admin.$eval("#ko-theme-toggle", (el) => el.getAttribute("aria-label") || "");
+  await admin.click("#ko-theme-toggle");
+  await new Promise((r) => setTimeout(r, 400));
+  const darkRestored = await admin.evaluate(() => document.documentElement.classList.contains("dark"));
+  check(
+    "theme toggle switches theme and updates action label",
+    darkAfter !== darkBefore && darkRestored === darkBefore && labelAfter !== themeLabel,
+    `dark ${darkBefore}->${darkAfter}->${darkRestored}`,
+  );
+  const festPages = [];
+  for (const url of [`${BASE}/`, `${BASE}/gamemaster`, `${BASE}/aufsicht/${tokenA}`]) {
+    const txt = await admin.evaluate(async (u) => {
+      const res = await fetch(u);
+      return await res.text();
+    }, url);
+    if (txt.includes("Kartoffelfest")) festPages.push(url);
+  }
+  const liveText = await admin.evaluate(() => document.body.textContent || "");
+  check("no Kartoffelfest naming in pages (Kartoffelfeuer)", festPages.length === 0 && !liveText.includes("Kartoffelfest"), festPages.join(","));
+
   // ---- reopen removes from rankings ----
   await admin.setViewport({ width: 1360, height: 900 });
   await admin.goto(`${BASE}/gamemaster`, { waitUntil: "networkidle0" });
@@ -503,16 +730,107 @@ try {
   await clickText(admin, "button", "Erfassung starten");
   await admin.waitForFunction(() => document.body.textContent.includes("Erfassung stoppen"), { timeout: 15000 });
 
-  // ---- revocation: delete supervisor B, access gone ----
+  // ---- supervisor B creates a throwaway participant for the participant-delete test ----
+  await supB.bringToFront?.();
+  await supB.goto(`${BASE}/aufsicht/${tokenB}`, { waitUntil: "networkidle0", timeout: 30000 });
+  await supB.waitForFunction(() => document.body.textContent.includes("Aufsicht: Ben Aufsicht"), { timeout: 20000 });
+  await supB.click('[data-testid="new-participant"]');
+  await supB.waitForSelector('[data-testid="create-form"]');
+  await supB.type("#ko-new-name", "Wegwerf Teilnehmer");
+  await supB.click('[data-testid="age-option-over_14"]');
+  await supB.click('[data-testid="start-participant"]');
+  await supB.waitForSelector('[data-testid="field-golf"]', { timeout: 15000 });
+  await supB.evaluate(() => { [...document.querySelectorAll("button")].find((b) => b.textContent.includes("Zur Liste")).click(); });
+  await supB.waitForFunction(() => document.body.textContent.includes("Wegwerf Teilnehmer"), { timeout: 15000 });
+
+  // ---- revocation: delete supervisor B via centered viewport modal ----
+  await admin.bringToFront?.();
+  await admin.setViewport({ width: 1360, height: 900 });
   await admin.goto(`${BASE}/gamemaster`, { waitUntil: "networkidle0" });
+  await admin.waitForFunction(() => document.body.textContent.includes("Ben Aufsicht"), { timeout: 20000 });
+  let deleteReqs = 0;
+  const deleteCounter = (req) => {
+    try {
+      const url = new URL(req.url());
+      if (req.method() === "DELETE" && url.pathname.startsWith("/api/gamemaster/")) deleteReqs += 1;
+    } catch { /* ignore */ }
+  };
+  admin.on("request", deleteCounter);
+  async function openDeleteModal(ariaLabel) {
+    await admin.evaluate((label) => {
+      const b = [...document.querySelectorAll("button")].find((e) => e.getAttribute("aria-label") === label);
+      if (!b) throw new Error(`delete button missing: ${label}`);
+      b.scrollIntoView({ block: "center" });
+      b.click();
+    }, ariaLabel);
+    await admin.waitForSelector('[role="alertdialog"]', { timeout: 10000 });
+  }
+  async function modalCentered() {
+    return admin.evaluate(() => {
+      const el = document.querySelector('[role="alertdialog"]');
+      if (!el) return { ok: false, why: "no dialog" };
+      const r = el.getBoundingClientRect();
+      const cx = Math.abs((r.left + r.right) / 2 - window.innerWidth / 2);
+      const cy = Math.abs((r.top + r.bottom) / 2 - window.innerHeight / 2);
+      const fits = r.top >= 0 && r.left >= 0 && r.right <= window.innerWidth + 1 && r.bottom <= window.innerHeight + 1;
+      return { ok: cx < 80 && cy < 120 && fits, why: `cx=${cx.toFixed(0)} cy=${cy.toFixed(0)} fits=${fits}` };
+    });
+  }
+  // Escape preserves the row. (Row presence is tracked via the supervisor
+  // delete button: result attribution keeps "Ben Aufsicht" by design.)
+  await openDeleteModal("Ben Aufsicht entfernen");
+  const supModalCenter = await modalCentered();
+  check("supervisor delete modal centered viewport, fits without scrolling", supModalCenter.ok, supModalCenter.why);
+  await admin.keyboard.press("Escape");
+  await new Promise((r) => setTimeout(r, 500));
+  const escGone = !(await admin.$('[role="alertdialog"]'));
+  const escRow = !!(await admin.$('button[aria-label="Ben Aufsicht entfernen"]'));
+  check("supervisor delete Escape preserves row", escGone && escRow);
+  // Cancel preserves the row.
+  await openDeleteModal("Ben Aufsicht entfernen");
+  await clickText(admin, "button", "Abbrechen");
+  await new Promise((r) => setTimeout(r, 500));
+  const cancelRow = !!(await admin.$('button[aria-label="Ben Aufsicht entfernen"]'));
+  check("supervisor delete cancel preserves row", !(await admin.$('[role="alertdialog"]')) && cancelRow);
+  // Confirm with double click guarded to a single DELETE.
+  await openDeleteModal("Ben Aufsicht entfernen");
+  deleteReqs = 0;
   await admin.evaluate(() => {
-    const b = [...document.querySelectorAll("button")].find((e) => e.getAttribute("aria-label") === "Ben Aufsicht entfernen");
-    if (!b) throw new Error("delete button for Ben missing");
-    b.scrollIntoView({ block: "center" });
+    const b = [...document.querySelectorAll("button")].find((e) => e.textContent.trim() === "Bestätigen");
+    if (!b) throw new Error("confirm button missing");
+    b.click();
     b.click();
   });
-  await admin.waitForFunction(() => document.body.textContent.includes("wirklich"), { timeout: 10000 });
-  await clickText(admin, "button", "Bestätigen");
+  await admin.waitForFunction(() => !document.querySelector('button[aria-label="Ben Aufsicht entfernen"]'), { timeout: 15000 });
+  await new Promise((r) => setTimeout(r, 800));
+  check("supervisor delete double click guarded to one request", deleteReqs === 1, `DELETEs=${deleteReqs}`);
+  // Historical attribution survives the supervisor removal.
+  check("deleted supervisor attribution preserved in results", await hasText(admin, "body", "Ben Aufsicht"));
+
+  // ---- participant delete modal: centered, cancel preserves, confirm removes ----
+  await admin.waitForFunction(() => document.body.textContent.includes("Wegwerf Teilnehmer"), { timeout: 20000 });
+  await openDeleteModal("Wegwerf Teilnehmer löschen");
+  const partModalCenter = await modalCentered();
+  check("participant delete modal centered viewport, fits without scrolling", partModalCenter.ok, partModalCenter.why);
+  await clickText(admin, "button", "Abbrechen");
+  await new Promise((r) => setTimeout(r, 500));
+  check("participant delete cancel preserves row", await hasText(admin, "body", "Wegwerf Teilnehmer"));
+  await openDeleteModal("Wegwerf Teilnehmer löschen");
+  await clickText(admin, '[data-testid="delete-confirm"]', "Bestätigen");
+  await admin.waitForFunction(() => !document.body.textContent.includes("Wegwerf Teilnehmer"), { timeout: 15000 });
+  check("participant delete confirm performs removal", !(await hasText(admin, "body", "Wegwerf Teilnehmer")));
+  // Mobile viewport modal fits as well.
+  await admin.setViewport({ width: 390, height: 844, isMobile: true, hasTouch: true });
+  await admin.goto(`${BASE}/gamemaster`, { waitUntil: "networkidle0" });
+  await admin.waitForFunction(() => document.body.textContent.includes("Lina Browser"), { timeout: 20000 });
+  await openDeleteModal("Lina Browser löschen");
+  const mobileModal = await modalCentered();
+  await admin.screenshot({ path: join(shotDir, "delete-modal-mobile.png") });
+  await admin.keyboard.press("Escape");
+  await new Promise((r) => setTimeout(r, 500));
+  check("participant delete modal fits mobile viewport", mobileModal.ok && await hasText(admin, "body", "Lina Browser"), mobileModal.why);
+  admin.off("request", deleteCounter);
+  await admin.setViewport({ width: 1360, height: 900 });
   await new Promise((r) => setTimeout(r, 1500));
   await supB.goto(`${BASE}/aufsicht/${tokenB}`, { waitUntil: "networkidle0" });
   await new Promise((r) => setTimeout(r, 1500));

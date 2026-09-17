@@ -1,6 +1,6 @@
 # Kartoffelolympiade
 
-German responsive event scoring app for a potato festival: four disciplines
+German responsive event scoring app for the Kartoffelfeuer: four disciplines
 (Kartoffel-Golf, Hindernisparcours, 7-m-Werfen, Kartoffelschälen), two age
 groups (bis 14 / über 14), central Turso persistence.
 
@@ -78,6 +78,22 @@ latest central data and shows a spinner while loading; automatic refresh
 every 3 s is unchanged. Reloading only re-reads data — it changes nothing,
 resets nothing, and never hides a mutation error. Failed actions keep their
 error message until dismissed or retried.
+
+### Deletion confirmations, attribution, reset clearing, robust saves
+
+- Deleting a participant or supervisor asks in a centered viewport modal
+  (portal + backdrop, Escape/cancel/X closes, focus returns); failures stay
+  inside the modal for retry, success closes and refreshes.
+- Every discipline card in the supervisor editor shows
+  “Zuletzt erfasst von: NAME” from the persisted result attribution
+  (“Noch kein Eintrag” when empty); the gamemaster table keeps its author
+  labels, including names of removed supervisors.
+- “Zurücksetzen” on a stopwatch or the throwing countdown explicitly clears
+  the associated stored value (blank autosaves as a deletion); starting,
+  pausing, switching participants, or the countdown ticking never clears.
+- Autosave (500 ms) and polling (3 s) are ordering-safe: edits made during a
+  delayed save survive both saves and later polls, stale responses are
+  ignored, and only fields unchanged since sending leave the dirty set.
 
 ## Rules & workflow
 

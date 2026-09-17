@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Dialog } from "@base-ui-components/react/dialog";
 import {
   CheckIcon,
   EyeIcon,
   TrashIcon,
   ArrowPathIcon,
+  XMarkIcon,
 } from "@heroicons/react/24/outline";
 import type {
   AdminState,
@@ -37,6 +39,11 @@ export function AdminApp() {
   const [busy, setBusy] = useState(false);
   const [qr, setQr] = useState<{ name: string; token: string } | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<{ kind: "sup" | "part"; id: string; name: string } | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  // Synchronous pending guard: two clicks in the same tick must not send two
+  // DELETEs (state updates are async and would let both through).
+  const deleteBusyRef = useRef(false);
 
   const stateRef = useRef<AdminState | null>(null);
   const load = useCallback(async (silent = false) => {
@@ -124,16 +131,35 @@ export function AdminApp() {
     }
   }
 
+  function openDelete(req: { kind: "sup" | "part"; id: string; name: string }) {
+    setDeleteError(null);
+    deleteBusyRef.current = false;
+    setDeleteBusy(false);
+    setConfirmDelete(req);
+  }
+
+  function closeDelete() {
+    if (deleteBusyRef.current) return;
+    setConfirmDelete(null);
+    setDeleteError(null);
+  }
+
   async function doDelete() {
-    if (!confirmDelete) return;
-    setActionError(null);
+    if (!confirmDelete || deleteBusyRef.current) return;
+    deleteBusyRef.current = true;
+    setDeleteBusy(true);
+    setDeleteError(null);
     try {
       if (confirmDelete.kind === "sup") await adminApi.deleteSupervisor(confirmDelete.id);
       else await adminApi.deleteParticipant(confirmDelete.id);
       setConfirmDelete(null);
       await load();
     } catch (e) {
-      setActionError(e instanceof Error ? e.message : "Löschen fehlgeschlagen.");
+      // Failure stays inside the popup for retry; never hidden behind overlay.
+      setDeleteError(e instanceof Error ? e.message : "Löschen fehlgeschlagen.");
+    } finally {
+      deleteBusyRef.current = false;
+      setDeleteBusy(false);
     }
   }
 
@@ -184,7 +210,7 @@ export function AdminApp() {
           </p>
         </div>
         <div className="ml-auto flex gap-2">
-          <span className="group relative inline-flex">
+          <span className="ko-tip-anchor relative inline-flex">
             <button
               type="button"
               className="ko-btn"
@@ -202,7 +228,7 @@ export function AdminApp() {
             <span
               id="ko-refresh-tip"
               role="tooltip"
-              className="pointer-events-none absolute right-0 top-full z-10 mt-1 w-56 rounded bg-black px-2 py-1 text-xs text-white opacity-0 shadow transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
+              className="ko-tip pointer-events-none absolute right-0 top-full z-10 mt-1 w-56 rounded bg-black px-2 py-1 text-xs text-white shadow"
             >
               Lädt die neuesten zentralen Daten neu. Ändert oder setzt nichts zurück.
             </span>
@@ -294,7 +320,7 @@ export function AdminApp() {
                           type="button"
                           className="ko-btn ko-btn-danger"
                           aria-label={`${p.name} löschen`}
-                          onClick={() => setConfirmDelete({ kind: "part", id: p.id, name: p.name })}
+                          onClick={() => openDelete({ kind: "part", id: p.id, name: p.name })}
                         >
                           <TrashIcon className="h-5 w-5" aria-hidden="true" />
                         </button>
@@ -363,7 +389,7 @@ export function AdminApp() {
                     type="button"
                     className="ko-btn ko-btn-danger"
                     aria-label={`${s.name} entfernen`}
-                    onClick={() => setConfirmDelete({ kind: "sup", id: s.id, name: s.name })}
+                    onClick={() => openDelete({ kind: "sup", id: s.id, name: s.name })}
                   >
                     <TrashIcon className="h-5 w-5" aria-hidden="true" />
                   </button>
@@ -427,16 +453,64 @@ export function AdminApp() {
         />
       )}
       {confirmDelete && (
-        <div className="ko-card mx-auto max-w-md p-5" role="alertdialog" aria-label="Löschen bestätigen">
-          <p className="font-semibold">
-            „{confirmDelete.name}“ wirklich {confirmDelete.kind === "sup" ? "entfernen" : "löschen"}?
-            {confirmDelete.kind === "sup" ? " Ergebnisse bleiben mit Namen erhalten." : ""}
-          </p>
-          <div className="mt-4 flex gap-2">
-            <button type="button" className="ko-btn" onClick={() => setConfirmDelete(null)}>Abbrechen</button>
-            <button type="button" className="ko-btn ko-btn-danger" onClick={doDelete}>Bestätigen</button>
-          </div>
-        </div>
+        <Dialog.Root open={true} onOpenChange={(next) => !next && closeDelete()}>
+          <Dialog.Portal>
+            <Dialog.Backdrop className="ko-dialog-backdrop" />
+            <Dialog.Popup
+              className="ko-dialog-popup ko-card p-5"
+              role="alertdialog"
+              aria-modal="true"
+              aria-labelledby="ko-delete-title"
+              aria-describedby="ko-delete-desc"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <Dialog.Title id="ko-delete-title" className="text-lg font-bold">
+                  {confirmDelete.kind === "sup" ? "Aufsicht entfernen" : "Teilnehmer löschen"}
+                </Dialog.Title>
+                <Dialog.Close
+                  className="ko-btn px-3"
+                  aria-label="Schließen"
+                  onClick={closeDelete}
+                >
+                  <XMarkIcon className="h-5 w-5" aria-hidden="true" />
+                </Dialog.Close>
+              </div>
+              <Dialog.Description id="ko-delete-desc" className="mt-1">
+                „{confirmDelete.name}“ wirklich{" "}
+                {confirmDelete.kind === "sup" ? "entfernen" : "löschen"}?
+                {confirmDelete.kind === "sup"
+                  ? " Ergebnisse bleiben mit Namen erhalten."
+                  : " Alle Ergebnisse werden mit gelöscht."}
+              </Dialog.Description>
+              {deleteError && (
+                <p className="mt-2 font-semibold" role="alert">
+                  Löschen fehlgeschlagen: {deleteError}
+                </p>
+              )}
+              <div className="mt-4 flex gap-2">
+                <button
+                  type="button"
+                  className="ko-btn flex-1"
+                  data-testid="delete-cancel"
+                  autoFocus
+                  disabled={deleteBusy}
+                  onClick={closeDelete}
+                >
+                  Abbrechen
+                </button>
+                <button
+                  type="button"
+                  className="ko-btn ko-btn-danger flex-1"
+                  data-testid="delete-confirm"
+                  disabled={deleteBusy}
+                  onClick={doDelete}
+                >
+                  {deleteBusy ? "Wird gelöscht …" : "Bestätigen"}
+                </button>
+              </div>
+            </Dialog.Popup>
+          </Dialog.Portal>
+        </Dialog.Root>
       )}
     </div>
   );

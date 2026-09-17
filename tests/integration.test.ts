@@ -266,6 +266,104 @@ describe("deletion semantics", () => {
   });
 });
 
+describe("clearing results via explicit null", () => {
+  it("removes only the named discipline, preserves 0, keeps other attribution", async () => {    const c = await freshClient();
+    try {
+      const { a, b } = await setupTwoSupervisors(c);
+      const id = randomUUID();
+      await supervisorCreateParticipant(a.token, { id, name: "Kai", age_group: "up_to_14" }, c);
+      await supervisorPatchParticipant(
+        a.token, id,
+        { revision: 1, results: { golf: 4, throwing: 0, obstacle: 123 } }, c,
+      );
+      // Other supervisor adds peeling.
+      await supervisorPatchParticipant(b.token, id, { revision: 2, results: { peeling: 450 } }, c);
+      // Clear golf only.
+      const cleared = await supervisorPatchParticipant(
+        a.token, id, { revision: 3, results: { golf: null } }, c,
+      );
+      expect(cleared.revision).toBe(4);
+      const results = await findResultsForParticipant(c, id);
+      expect(results.golf?.value).toBeUndefined();
+      expect(results.throwing?.value).toBe(0);
+      expect(results.throwing?.supervisorName).toBe("Anna Aufsicht");
+      expect(results.obstacle?.value).toBe(123);
+      expect(results.peeling?.supervisorName).toBe("Ben Aufsicht");
+      // Numeric 0 stays a valid throwing result (not missing).
+      expect(results.throwing).toBeDefined();
+      // Cleared discipline excludes completion.
+      await expectCode(supervisorFinalize(a.token, id, 4, c), 409, "INCOMPLETE");
+      // Clearing an absent value is a no-op (no bump, no attribution invented).
+      const noop = await supervisorPatchParticipant(
+        a.token, id, { revision: 4, results: { golf: null } }, c,
+      );
+      expect(noop.revision).toBe(4);
+      expect((await findResultsForParticipant(c, id)).golf?.value).toBeUndefined();
+    } finally {
+      c.close();
+    }
+  });
+
+  it("clear respects closed / revoked / finalized / stale", async () => {
+    const c = await freshClient();
+    try {
+      const { a } = await setupTwoSupervisors(c);
+      const id = randomUUID();
+      await supervisorCreateParticipant(a.token, { id, name: "Udo", age_group: "over_14" }, c);
+      await supervisorPatchParticipant(
+        a.token, id,
+        { revision: 1, results: { golf: 3, obstacle: 100, throwing: 1, peeling: 200 } }, c,
+      );
+      // Stale revision rejected.
+      await expectCode(
+        supervisorPatchParticipant(a.token, id, { revision: 1, results: { golf: null } }, c),
+        409, "STALE",
+      );
+      // Closed collection rejected.
+      await adminSetCollection(false, c);
+      await expectCode(
+        supervisorPatchParticipant(a.token, id, { revision: 2, results: { golf: null } }, c),
+        409, "CLOSED",
+      );
+      await adminSetCollection(true, c);
+      // Finalize then clear rejected as finalized.
+      await supervisorFinalize(a.token, id, 2, c);
+      await expectCode(
+        supervisorPatchParticipant(a.token, id, { revision: 3, results: { golf: null } }, c),
+        409, "FINALIZED",
+      );
+      // Revoked token rejected.
+      await adminReopen(id, 3, c);
+      await adminDeleteSupervisor(a.id, c);
+      await expectCode(
+        supervisorPatchParticipant(a.token, id, { revision: 4, results: { golf: null } }, c),
+        401, "UNAUTHORIZED",
+      );
+    } finally {
+      c.close();
+    }
+  });
+
+  it("rejects unknown disciplines and non-null invalid values in clears", async () => {
+    const c = await freshClient();
+    try {
+      const { a } = await setupTwoSupervisors(c);
+      const id = randomUUID();
+      await supervisorCreateParticipant(a.token, { id, name: "Eva", age_group: "up_to_14" }, c);
+      await expectCode(
+        supervisorPatchParticipant(a.token, id, { revision: 1, results: { unknown: 3 } }, c),
+        400, "INVALID",
+      );
+      await expectCode(
+        supervisorPatchParticipant(a.token, id, { revision: 1, results: { golf: 0 } }, c),
+        400, "INVALID",
+      );
+    } finally {
+      c.close();
+    }
+  });
+});
+
 describe("malformed input + origin rules", () => {
   it("rejects invalid names, ages, values", async () => {
     const c = await freshClient();
