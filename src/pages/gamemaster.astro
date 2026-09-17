@@ -3,6 +3,6 @@ import Layout from "../components/Layout.astro";
 import { AdminApp } from "../components/AdminApp.tsx";
 export const prerender = false;
 ---
-<Layout title="Admin">
+<Layout title="Spielleitung" noindex={true}>
   <AdminApp client:only="react" />
 </Layout>

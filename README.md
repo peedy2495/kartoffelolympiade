@@ -6,8 +6,10 @@ groups (bis 14 / über 14), central Turso persistence.
 
 - Supervisors (`/aufsicht/TOKEN`) share draft participants, autosave results
   with revision locking, and finalize complete entries.
-- `/admin` is intentionally public (no login): collection start/stop,
+- `/gamemaster` is intentionally public (no login): collection start/stop,
   participant table, statistics, supervisor QR invitations, live leaders.
+  Public pages link nowhere near management; the page asks search engines
+  not to index it.
 - Rankings per age group use competition ranks (1, 1, 3); overall score is
   the sum of the four discipline ranks — lower is better.
 
@@ -19,7 +21,7 @@ Requirements: Node 22.
 npm install
 cp .env.example .env.development.local  # fill in real Turso values
 npm run db:migrate
-npm run dev
+npm run dev  # loads .env.development.local automatically
 ```
 
 Environment (dev file and Vercel env alike):
@@ -35,12 +37,18 @@ Never commit real credentials. `.env.development.local` is git-ignored.
 - `npm run build` — `astro check` + production build
 - `npm test` — Vitest (unit + file-DB integration, never touches live Turso)
 - `npm run test:browser` — Puppeteer end-to-end against a local file DB
+- `node scripts/smoke-dev.mjs` — read-only dev smoke: ordinary `astro dev`
+  with inherited `TURSO_*` unset (uses `.env.development.local`), GETs
+  `/api/gamemaster/state` only
+- `node scripts/smoke-built-api.mjs` — read-only production smoke against the
+  real Vercel build output with an isolated file DB (GET state only)
 - `npm run db:migrate` — idempotent `ko_` schema setup (no test rows)
 
 ## Deploy (GitHub → Vercel)
 
 1. Push to GitHub, import the repo in Vercel (Astro preset).
-2. Set `TURSO_DATABASE_URL` and `TURSO_AUTH_TOKEN` as Vercel environment variables.
+2. Set `TURSO_DATABASE_URL` and `TURSO_AUTH_TOKEN` as Vercel environment variables
+   (runtime; nothing Turso-related is baked into the build).
 3. Deploy; the schema initializes lazily on first API request
    (`npm run db:migrate` also works against the live DB for a connectivity check).
 

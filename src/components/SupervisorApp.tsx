@@ -1058,7 +1058,7 @@ function EditorView(props: {
         </button>
         <p className="ko-hint mt-2">
           Alle vier Werte erforderlich. Nach dem Abschließen verschwindet der Teilnehmer hier —
-          Korrekturen laufen über „Erneut öffnen“ im Admin-Bereich.
+          Korrekturen laufen über „Erneut öffnen“ bei der Spielleitung.
         </p>
       </div>
     </div>

@@ -66,16 +66,17 @@ export const ALL: APIRoute = async ({ request }) => {
   const seg = path.split("/").filter(Boolean);
 
   try {
+    // Removed namespace: no alias, no redirect, no database initialization.
+    if (seg[0] === "admin") {
+      return json({ error: "NOT_FOUND", message: "Unbekannte Route." }, 404);
+    }
     const client = await getReadyClient();
     const isMutation = method !== "GET" && method !== "HEAD" && method !== "OPTIONS";
     if (isMutation && foreignOrigin(request, url))
       return json({ error: "FORBIDDEN", message: "Fremder Origin abgelehnt." }, 403);
 
-    // ---- admin (same-origin, no credentials by explicit requirement) ----
-    if (seg[0] === "admin") {
-      if (method === "GET" && seg.length === 1 && seg[0] === "admin") {
-        // /api/admin/state is canonical; bare /api/admin also serves state.
-      }
+    // ---- gamemaster (same-origin, no credentials by explicit requirement) ----
+    if (seg[0] === "gamemaster") {
       if (method === "GET" && seg[1] === "state" && seg.length === 2) {
         return json(await adminGetState(client));
       }
@@ -115,7 +116,7 @@ export const ALL: APIRoute = async ({ request }) => {
         const body = (await readBody(request)) as { revision?: unknown };
         return json(await adminReopen(seg[2], body.revision, client));
       }
-      return json({ error: "NOT_FOUND", message: "Unbekannte Admin-Route." }, 404);
+      return json({ error: "NOT_FOUND", message: "Unbekannte Spielleitungs-Route." }, 404);
     }
 
     // ---- supervisor (Bearer token required) ----

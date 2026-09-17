@@ -1,15 +1,13 @@
 // Centralized Turso access. Server-only: never import from client components.
 import { createClient, type Client } from "@libsql/client";
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
+// Bundled at build time so the Vercel server output needs no schema.sql file.
+import schema from "./schema.sql?raw";
 
 let singleton: Client | null = null;
 let schemaReady = false;
 
 function schemaSql(): string {
-  const here = dirname(fileURLToPath(import.meta.url));
-  return readFileSync(join(here, "schema.sql"), "utf8");
+  return schema;
 }
 
 /** Split schema into single statements (schema contains no triggers/procedures). */
@@ -46,11 +44,35 @@ function configError(): Error {
   );
 }
 
+interface ViteEnv {
+  DEV?: boolean;
+  MODE?: string;
+  TURSO_DATABASE_URL?: string;
+  TURSO_AUTH_TOKEN?: string;
+}
+
+/**
+ * Resolve Turso config: runtime process.env wins (Vercel, tools, tests).
+ * Dev-only fallback to Vite-loaded env (.env.development.local), which Astro
+ * exposes via import.meta.env instead of process.env. Production never uses
+ * build-time env, so no secret is injected into or leaked from the bundle.
+ */
+export function resolveDatabaseConfig(
+  processEnv: NodeJS.ProcessEnv = process.env,
+  viteEnv: ViteEnv = import.meta.env as unknown as ViteEnv,
+): { url: string | undefined; authToken: string | undefined } {
+  const dev = viteEnv.DEV === true;
+  const url =
+    processEnv["TURSO_DATABASE_URL"] ?? (dev ? viteEnv.TURSO_DATABASE_URL : undefined);
+  const authToken =
+    processEnv["TURSO_AUTH_TOKEN"] ?? (dev ? viteEnv.TURSO_AUTH_TOKEN : undefined);
+  return { url, authToken };
+}
+
 /** Shared client from server runtime env (process.env for Vercel, .env files in dev). */
 export function getClient(): Client {
   if (singleton) return singleton;
-  const url = process.env["TURSO_DATABASE_URL"];
-  const authToken = process.env["TURSO_AUTH_TOKEN"];
+  const { url, authToken } = resolveDatabaseConfig();
   if (!url) throw configError();
   singleton =
     url.startsWith("file:") || url === ":memory:"

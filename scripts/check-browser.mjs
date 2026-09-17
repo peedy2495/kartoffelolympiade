@@ -140,7 +140,7 @@ try {
     stdio: ["ignore", "pipe", "pipe"],
   });
   const serverReady = waitForServer(server).catch(() => {});
-  await waitHttpOk(`${BASE}/admin`);
+  await waitHttpOk(`${BASE}/gamemaster`);
   await serverReady;
 
   const exe = findChrome();
@@ -155,10 +155,28 @@ try {
   const supB = await supBCtx.newPage();
   await admin.setViewport({ width: 1360, height: 900 });
 
+  // ---- public pages promote no management route; old /admin is gone ----
+  await admin.goto(`${BASE}/`, { waitUntil: "networkidle0", timeout: 30000 });
+  const homeLinks = await admin.evaluate(() =>
+    [...document.querySelectorAll("a")].map((a) => a.getAttribute("href") || ""),
+  );
+  const homeText = await admin.evaluate(() => document.body.textContent || "");
+  check(
+    "homepage has no management link/path/promotion",
+    !homeLinks.some((h) => h.includes("/admin") || h.includes("/gamemaster")) &&
+      !homeText.includes("/admin") &&
+      !homeText.includes("/gamemaster") &&
+      !homeText.includes("Admin-Bereich"),
+  );
+  const oldPage = await admin.goto(`${BASE}/admin`, { waitUntil: "networkidle0", timeout: 30000 }).catch(() => null);
+  check("old /admin page returns 404", oldPage === null || oldPage.status() === 404);
+  const oldApi = await adminFetch(admin, "/api/admin/state");
+  check("old /api/admin/state returns 404", oldApi.status === 404);
+
   // ---- admin: start collection ----
-  await admin.goto(`${BASE}/admin`, { waitUntil: "networkidle0", timeout: 30000 });
+  await admin.goto(`${BASE}/gamemaster`, { waitUntil: "networkidle0", timeout: 30000 });
   await admin.waitForFunction(
-    () => document.body.textContent.includes("Admin-Bereich"),
+    () => document.body.textContent.includes("Spielleitung"),
     { timeout: 20000 },
   );
   if ((await admin.$("body")) && (await hasText(admin, "button", "Erfassung starten"))) {
@@ -196,15 +214,15 @@ try {
   const copied = await hasText(admin, "button", "Kopiert!");
   await admin.click('button[aria-label="Schließen"]');
   await new Promise((r) => setTimeout(r, 500));
-  check("QR modal X closes (copy attempted)", !(await hasText(admin, "p", "QR-Code scannen oder Link kopieren")) || copied || true);
+  check("QR modal X closes (copy attempted)", !(await hasText(admin, "p", "QR-Code scannen oder Link kopieren")) || copied);
 
   // Tokens via API (never logged).
-  const st = await adminFetch(admin, "/api/admin/state");
+  const st = await adminFetch(admin, "/api/gamemaster/state");
   const supAId = st.body.supervisors.find((s) => s.name === "Anna Aufsicht")?.id;
   const supBId = st.body.supervisors.find((s) => s.name === "Ben Aufsicht")?.id;
   check("two supervisors created", Boolean(supAId && supBId));
-  const invA = await adminFetch(admin, `/api/admin/supervisors/${supAId}/invite`);
-  const invB = await adminFetch(admin, `/api/admin/supervisors/${supBId}/invite`);
+  const invA = await adminFetch(admin, `/api/gamemaster/supervisors/${supAId}/invite`);
+  const invB = await adminFetch(admin, `/api/gamemaster/supervisors/${supBId}/invite`);
   const tokenA = invA.body.token;
   const tokenB = invB.body.token;
   check("invite tokens issued (not logged)", typeof tokenA === "string" && typeof tokenB === "string" && tokenA !== tokenB);
@@ -213,6 +231,13 @@ try {
   await supA.goto(`${BASE}/aufsicht/${tokenA}`, { waitUntil: "networkidle0", timeout: 30000 });
   await supA.waitForFunction(() => document.body.textContent.includes("Aufsicht: Anna Aufsicht"), { timeout: 20000 });
   check("supervisor A identity shown", true);
+  const supLinks = await supA.evaluate(() =>
+    [...document.querySelectorAll("a")].map((a) => a.getAttribute("href") || ""),
+  );
+  check(
+    "supervisor page has no management nav",
+    !supLinks.some((h) => h.includes("/admin") || h.includes("/gamemaster")),
+  );
   await supA.click('[data-testid="new-participant"]');
   await supA.waitForSelector('[data-testid="create-form"]');
   // Initially no age selected.
@@ -321,19 +346,19 @@ try {
 
   // ---- screenshots desktop + mobile + dark ----
   await admin.setViewport({ width: 1360, height: 900 });
-  await admin.goto(`${BASE}/admin`, { waitUntil: "networkidle0" });
+  await admin.goto(`${BASE}/gamemaster`, { waitUntil: "networkidle0" });
   await new Promise((r) => setTimeout(r, 1500));
-  check("desktop no horizontal overflow (admin)", await noHorizontalOverflow(admin));
-  await admin.screenshot({ path: join(shotDir, "admin-desktop-light.png") });
+  check("desktop no horizontal overflow (gamemaster)", await noHorizontalOverflow(admin));
+  await admin.screenshot({ path: join(shotDir, "gamemaster-desktop-light.png") });
   await admin.click("#ko-theme-toggle");
   await new Promise((r) => setTimeout(r, 400));
-  await admin.screenshot({ path: join(shotDir, "admin-desktop-dark.png") });
+  await admin.screenshot({ path: join(shotDir, "gamemaster-desktop-dark.png") });
   await admin.click("#ko-theme-toggle");
   await admin.setViewport({ width: 390, height: 844, isMobile: true, hasTouch: true });
-  await admin.goto(`${BASE}/admin`, { waitUntil: "networkidle0" });
+  await admin.goto(`${BASE}/gamemaster`, { waitUntil: "networkidle0" });
   await new Promise((r) => setTimeout(r, 1200));
-  check("mobile no horizontal overflow (admin)", await noHorizontalOverflow(admin));
-  await admin.screenshot({ path: join(shotDir, "admin-mobile-light.png") });
+  check("mobile no horizontal overflow (gamemaster)", await noHorizontalOverflow(admin));
+  await admin.screenshot({ path: join(shotDir, "gamemaster-mobile-light.png") });
   await supA.setViewport({ width: 390, height: 844, isMobile: true, hasTouch: true });
   await supA.goto(`${BASE}/aufsicht/${tokenA}`, { waitUntil: "networkidle0" });
   await new Promise((r) => setTimeout(r, 1200));
@@ -342,7 +367,7 @@ try {
 
   // ---- reopen removes from rankings ----
   await admin.setViewport({ width: 1360, height: 900 });
-  await admin.goto(`${BASE}/admin`, { waitUntil: "networkidle0" });
+  await admin.goto(`${BASE}/gamemaster`, { waitUntil: "networkidle0" });
   await admin.waitForFunction(() => document.body.textContent.includes("Erneut öffnen"), { timeout: 20000 });
   await clickText(admin, "button", "Erneut öffnen");
   await admin.waitForFunction(() => document.body.textContent.includes("Noch keine abgeschlossenen Wertungen"), { timeout: 20000 });
@@ -370,7 +395,7 @@ try {
   await admin.waitForFunction(() => document.body.textContent.includes("Erfassung stoppen"), { timeout: 15000 });
 
   // ---- revocation: delete supervisor B, access gone ----
-  await admin.goto(`${BASE}/admin`, { waitUntil: "networkidle0" });
+  await admin.goto(`${BASE}/gamemaster`, { waitUntil: "networkidle0" });
   await admin.evaluate(() => {
     const b = [...document.querySelectorAll("button")].find((e) => e.getAttribute("aria-label") === "Ben Aufsicht entfernen");
     if (!b) throw new Error("delete button for Ben missing");

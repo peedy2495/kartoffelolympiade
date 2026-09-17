@@ -9,7 +9,8 @@ Workflow:
 - Track work in `.agents/PLAN.md` ( checkboxes, next action explicit) and
   report in `.agents/IMPLEMENTATION_REPORT.md`.
 - Comments in English, product UI in German.
-- `/admin` stays public — never add authentication there.
+- `/gamemaster` stays public — never add authentication there. Public pages
+  must not link to management.
 - Never print, copy, commit or expose Turso credentials.
 - Scratch/logs/browser profiles go under `artifacts/opencode/` (git-ignored);
   reusable regression scripts live in `scripts/`.

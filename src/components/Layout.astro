@@ -5,8 +5,9 @@ import "../styles/global.css";
 interface Props {
   title: string;
   noReferrer?: boolean;
+  noindex?: boolean;
 }
-const { title, noReferrer = false } = Astro.props;
+const { title, noReferrer = false, noindex = false } = Astro.props;
 ---
 <!doctype html>
 <html lang="de">
@@ -14,6 +15,7 @@ const { title, noReferrer = false } = Astro.props;
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     {noReferrer && <meta name="referrer" content="no-referrer" />}
+    {noindex && <meta name="robots" content="noindex, nofollow" />}
     <meta name="description" content="Kartoffelolympiade – Wertung für das Kartoffelfest." />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <title>{title} · Kartoffelolympiade</title>
@@ -33,7 +35,6 @@ const { title, noReferrer = false } = Astro.props;
         <img src="/favicon.svg" alt="" width="32" height="32" aria-hidden="true" />
         <a href="/" class="text-lg font-bold tracking-tight">Kartoffelolympiade</a>
         <nav class="ml-auto flex items-center gap-2" aria-label="Hauptnavigation">
-          <a class="ko-btn" href="/admin">Admin</a>
           <button id="ko-theme-toggle" class="ko-btn" type="button" aria-label="Farbschema wechseln">◐</button>
         </nav>
       </div>
@@ -42,7 +43,7 @@ const { title, noReferrer = false } = Astro.props;
       <slot />
     </main>
     <footer class="mx-auto max-w-[1320px] px-4 pb-8">
-      <p class="ko-hint">Kartoffelolympiade · zentrale Wertung · /admin ist öffentlich zugänglich.</p>
+      <p class="ko-hint">Kartoffelolympiade · zentrale Wertung.</p>
     </footer>
     <script is:inline>
       document.getElementById("ko-theme-toggle")?.addEventListener("click", () => {

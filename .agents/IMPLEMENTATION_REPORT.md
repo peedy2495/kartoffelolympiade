@@ -4,30 +4,29 @@ SUCCESS
 
 # Implemented
 
-- Completed and verified the Kartoffelolympiade app (Astro 5 + React 19, central Turso via @libsql/client, German UI, public /admin, token supervisor routes, QR invites, collection gate, revision-locked shared drafts, per-discipline attribution, competition-rank leaders per age group).
-- Repaired schema statement splitting (SQL `--` comments contained semicolons; comments now stripped before splitting) in `src/server/db.ts` and `scripts/migrate.mjs`; fixed a strict-null error in `service.ts`.
-- Moved integration-test file DBs to repository-local `artifacts/test/` (with cleanup); added `scripts/check-browser.mjs` (puppeteer-core, isolated file DB + owned dev server, 22 checks, desktop/mobile light/dark screenshots under `artifacts/browser/`).
-- Verified live Turso connectivity with non-destructive idempotent migration (no test rows written, no secrets exposed).
-- Self-reviewed changed files, screenshots (light/dark, desktop/mobile, no page overflow), and secret hygiene; no commits/pushes made.
+- Fixed dev HTTP 500: Turso config now falls back to Vite dev env when runtime env is empty.
+- Fixed Vercel HTTP 500: schema.sql bundled via `?raw` import, no runtime file read.
+- Moved management to /gamemaster (page + /api/gamemaster); old /admin page and API return 404.
+- Removed all public promotion of management; gamemaster page carries noindex/nofollow.
+- Added dev/prod read-only smoke scripts and env regression tests; docs updated.
 
 # Changed Files
 
-- src/server/db.ts, src/server/service.ts, scripts/migrate.mjs, tests/integration.test.ts
-- scripts/check-browser.mjs
-- .agents/PLAN.md (all boxes checked, marked Completed)
+- src/server/db.ts, src/pages/api/[...path].ts, src/pages/gamemaster.astro (renamed from admin.astro), src/pages/index.astro, src/components/Layout.astro, src/components/AdminApp.tsx, src/components/SupervisorApp.tsx, src/lib/api.ts
+- tests/db-env.test.ts, scripts/smoke-dev.mjs, scripts/smoke-built-api.mjs, scripts/check-browser.mjs, README.md, AGENTS.md
 
 # Verification
 
-- `npm test` — passed (29/29: validation, rankings, service/integration incl. attribution, revision conflicts, gates, finalize/reopen, deletions, origin rules).
-- `npm run build` (`astro check` + build) — passed.
-- `node scripts/check-browser.mjs` — passed (22/22: supervisors, QR X/Escape, shared draft, keyboard/steppers/stopwatch + reset, 60s countdown start/pause/reset with hits untouched without full-minute wait, autosave, finalize, leaders, reopen, collection blocking, revocation, overflow, screenshots).
-- `node --env-file=.env.development.local scripts/migrate.mjs` — passed (live Turso reachable, `ko_` schema ensured, no test records).
-- `git diff --check` — passed; secret scan clean (only `.env.example` placeholders; `.env.development.local`, `artifacts/` git-ignored).
+- `npx vitest run tests/db-env.test.ts` before fix — failed (4 failed, missing dev fallback); after fix `npx vitest run` — passed (34 passed).
+- `node scripts/smoke-built-api.mjs --path /api/admin/state` on old build — failed (HTTP 500 ENOENT schema.sql); on fresh build `GET /api/gamemaster/state` — passed (HTTP 200), `GET /api/admin/state` — passed (HTTP 404).
+- `node scripts/smoke-dev.mjs --path /api/admin/state` before fix — failed (HTTP 500); after fix `GET /api/gamemaster/state` — passed (HTTP 200, real .env.development.local, GET only).
+- `npm run build` — passed; `node scripts/check-browser.mjs` — passed (26/26, incl. no-promotion, /admin 404, real QR X close).
+- `git diff --check` — passed; client-bundle TURSO scan clean; /gamemaster noindex, /admin 404, public pages link-free verified via live curl.
 - Self-review — passed.
 
 # Plan Deviations
 
-- none (used existing `@base-ui-components/react` Dialog as instructed; no migration).
+- none
 
 # Blockers
 

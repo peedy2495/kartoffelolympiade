@@ -1,4 +1,4 @@
-// Typed fetch helpers for admin + supervisor REST endpoints.
+// Typed fetch helpers for gamemaster + supervisor REST endpoints.
 import type {
   AdminState,
   AgeGroup,
@@ -29,31 +29,31 @@ async function req<T>(url: string, init?: RequestInit): Promise<T> {
 }
 
 export const adminApi = {
-  state: () => req<AdminState>("/api/admin/state"),
+  state: () => req<AdminState>("/api/gamemaster/state"),
   setCollection: (open: boolean) =>
-    req<{ collectionOpen: boolean }>("/api/admin/collection", {
+    req<{ collectionOpen: boolean }>("/api/gamemaster/collection", {
       method: "POST",
       body: JSON.stringify({ open }),
     }),
   createSupervisor: (name: string) =>
-    req<{ id: string; name: string; token: string }>("/api/admin/supervisors", {
+    req<{ id: string; name: string; token: string }>("/api/gamemaster/supervisors", {
       method: "POST",
       body: JSON.stringify({ name }),
     }),
   invite: (id: string) =>
     req<{ id: string; name: string; token: string }>(
-      `/api/admin/supervisors/${encodeURIComponent(id)}/invite`,
+      `/api/gamemaster/supervisors/${encodeURIComponent(id)}/invite`,
     ),
   deleteSupervisor: (id: string) =>
-    req<{ ok: true }>(`/api/admin/supervisors/${encodeURIComponent(id)}`, {
+    req<{ ok: true }>(`/api/gamemaster/supervisors/${encodeURIComponent(id)}`, {
       method: "DELETE",
     }),
   deleteParticipant: (id: string) =>
-    req<{ ok: true }>(`/api/admin/participants/${encodeURIComponent(id)}`, {
+    req<{ ok: true }>(`/api/gamemaster/participants/${encodeURIComponent(id)}`, {
       method: "DELETE",
     }),
   reopen: (id: string, revision: number) =>
-    req<Participant>(`/api/admin/participants/${encodeURIComponent(id)}/reopen`, {
+    req<Participant>(`/api/gamemaster/participants/${encodeURIComponent(id)}/reopen`, {
       method: "POST",
       body: JSON.stringify({ revision }),
     }),

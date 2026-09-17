@@ -128,7 +128,7 @@ export function AdminApp() {
   if (error && !state) {
     return (
       <div className="ko-card p-6">
-        <h1 className="text-xl font-bold">Admin-Bereich</h1>
+        <h1 className="text-xl font-bold">Spielleitung</h1>
         <p className="mt-2">Fehler: {error}</p>
         <button type="button" className="ko-btn ko-btn-primary mt-4" onClick={() => load()}>
           Erneut versuchen
@@ -155,7 +155,7 @@ export function AdminApp() {
     <div className="flex flex-col gap-6">
       <div className="ko-card flex flex-wrap items-center gap-3 p-4 sm:p-5">
         <div>
-          <h1 className="text-xl font-bold">Admin-Bereich</h1>
+          <h1 className="text-xl font-bold">Spielleitung</h1>
           <p className="ko-hint">
             Erfassung: {state.collectionOpen ? "geöffnet" : "geschlossen"}
             {stale && " · Anzeige möglicherweise veraltet"}
