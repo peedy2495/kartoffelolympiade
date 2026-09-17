@@ -52,6 +52,33 @@ Never commit real credentials. `.env.development.local` is git-ignored.
 3. Deploy; the schema initializes lazily on first API request
    (`npm run db:migrate` also works against the live DB for a connectivity check).
 
+### Domains (trusted hosts)
+
+The API accepts same-origin mutations only. Astro keeps the public request
+origin only for exact hosts listed in `security.allowedDomains`
+(`src/server/allowed-domains.ts`, wired in `astro.config.mjs`):
+
+- `https://kartoffelolympiade.vercel.app` (default production host)
+- the current deployment hosts from the `VERCEL_URL`, `VERCEL_BRANCH_URL`
+  and `VERCEL_PROJECT_PRODUCTION_URL` build variables (exact match, https)
+- an optional custom domain via the `APP_ORIGIN` build variable as an
+  explicit absolute `http(s)` origin
+  (e.g. `APP_ORIGIN=https://spiele.example.de`; hostnames without scheme,
+  paths, query strings, credentials and wildcards are ignored)
+- local development: `http://localhost`, `http://127.0.0.1`, `http://[::1]`
+  on any port
+
+Cross-origin requests are still rejected with `403`. Wildcard domains are
+never configured.
+
+### Reload button (`/gamemaster`)
+
+The “Daten neu laden” icon button (with hover/keyboard tooltip) fetches the
+latest central data and shows a spinner while loading; automatic refresh
+every 3 s is unchanged. Reloading only re-reads data — it changes nothing,
+resets nothing, and never hides a mutation error. Failed actions keep their
+error message until dismissed or retried.
+
 ## Rules & workflow
 
 - Server is authoritative: revision-checked drafts, collection gate and token

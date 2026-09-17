@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   CheckIcon,
   EyeIcon,
@@ -26,8 +26,10 @@ function rawValue(d: Discipline, v: number | undefined): string {
 
 export function AdminApp() {
   const [state, setState] = useState<AdminState | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [stale, setStale] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [search, setSearch] = useState("");
   const [ageFilter, setAgeFilter] = useState<"all" | AgeGroup>("all");
   const [statusFilter, setStatusFilter] = useState<"all" | "draft" | "finalized">("all");
@@ -36,18 +38,32 @@ export function AdminApp() {
   const [qr, setQr] = useState<{ name: string; token: string } | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<{ kind: "sup" | "part"; id: string; name: string } | null>(null);
 
+  const stateRef = useRef<AdminState | null>(null);
   const load = useCallback(async (silent = false) => {
     try {
       const s = await adminApi.state();
+      stateRef.current = s;
       setState(s);
-      setError(null);
+      setLoadError(null);
       setStale(false);
     } catch (e) {
-      if (!silent || state === null)
-        setError(e instanceof Error ? e.message : "Laden fehlgeschlagen.");
+      // Background polls never clear a mutation error; a failed poll with
+      // existing data only marks the view as stale.
+      if (stateRef.current === null)
+        setLoadError(e instanceof Error ? e.message : "Laden fehlgeschlagen.");
       else setStale(true);
     }
-  }, [state]);
+  }, []);
+
+  async function manualRefresh() {
+    if (refreshing) return;
+    setRefreshing(true);
+    try {
+      await load(false);
+    } finally {
+      setRefreshing(false);
+    }
+  }
 
   useEffect(() => {
     load();
@@ -69,11 +85,12 @@ export function AdminApp() {
   async function toggleCollection() {
     if (!state || busy) return;
     setBusy(true);
+    setActionError(null);
     try {
       await adminApi.setCollection(!state.collectionOpen);
       await load();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Umschalten fehlgeschlagen.");
+      setActionError(e instanceof Error ? e.message : "Umschalten fehlgeschlagen.");
     } finally {
       setBusy(false);
     }
@@ -83,53 +100,58 @@ export function AdminApp() {
     const name = newName.trim();
     if (!name || busy) return;
     setBusy(true);
+    setActionError(null);
     try {
       const created = await adminApi.createSupervisor(name);
       setNewName("");
       setQr({ name: created.name, token: created.token });
       await load();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Anlegen fehlgeschlagen.");
+      // newName is kept so the entered name survives the failure.
+      setActionError(e instanceof Error ? e.message : "Anlegen fehlgeschlagen.");
     } finally {
       setBusy(false);
     }
   }
 
   async function openInvite(id: string, name: string) {
+    setActionError(null);
     try {
       const inv = await adminApi.invite(id);
       setQr({ name: inv.name || name, token: inv.token });
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Einladung fehlgeschlagen.");
+      setActionError(e instanceof Error ? e.message : "Einladung fehlgeschlagen.");
     }
   }
 
   async function doDelete() {
     if (!confirmDelete) return;
+    setActionError(null);
     try {
       if (confirmDelete.kind === "sup") await adminApi.deleteSupervisor(confirmDelete.id);
       else await adminApi.deleteParticipant(confirmDelete.id);
       setConfirmDelete(null);
       await load();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Löschen fehlgeschlagen.");
+      setActionError(e instanceof Error ? e.message : "Löschen fehlgeschlagen.");
     }
   }
 
   async function reopen(p: Participant) {
+    setActionError(null);
     try {
       await adminApi.reopen(p.id, p.revision);
       await load();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Öffnen fehlgeschlagen.");
+      setActionError(e instanceof Error ? e.message : "Öffnen fehlgeschlagen.");
     }
   }
 
-  if (error && !state) {
+  if (loadError && !state) {
     return (
       <div className="ko-card p-6">
         <h1 className="text-xl font-bold">Spielleitung</h1>
-        <p className="mt-2">Fehler: {error}</p>
+        <p className="mt-2">Fehler: {loadError}</p>
         <button type="button" className="ko-btn ko-btn-primary mt-4" onClick={() => load()}>
           Erneut versuchen
         </button>
@@ -162,9 +184,29 @@ export function AdminApp() {
           </p>
         </div>
         <div className="ml-auto flex gap-2">
-          <button type="button" className="ko-btn" onClick={() => load(true)} aria-label="Aktualisieren">
-            <ArrowPathIcon className="h-5 w-5" aria-hidden="true" />
-          </button>
+          <span className="group relative inline-flex">
+            <button
+              type="button"
+              className="ko-btn"
+              onClick={manualRefresh}
+              disabled={refreshing}
+              title="Daten neu laden"
+              aria-label="Daten neu laden"
+              aria-describedby="ko-refresh-tip"
+            >
+              <ArrowPathIcon
+                className={`h-5 w-5${refreshing ? " animate-spin" : ""}`}
+                aria-hidden="true"
+              />
+            </button>
+            <span
+              id="ko-refresh-tip"
+              role="tooltip"
+              className="pointer-events-none absolute right-0 top-full z-10 mt-1 w-56 rounded bg-black px-2 py-1 text-xs text-white opacity-0 shadow transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
+            >
+              Lädt die neuesten zentralen Daten neu. Ändert oder setzt nichts zurück.
+            </span>
+          </span>
           <button
             type="button"
             className={`ko-btn ${state.collectionOpen ? "" : "ko-btn-primary"}`}
@@ -175,9 +217,9 @@ export function AdminApp() {
           </button>
         </div>
       </div>
-      {error && (
+      {actionError && (
         <div className="ko-card p-4" role="alert">
-          <p>Fehler: {error} <button type="button" className="ko-btn ml-2" onClick={() => load()}>Erneut versuchen</button></p>
+          <p>Fehler: {actionError} <button type="button" className="ko-btn ml-2" onClick={() => setActionError(null)}>Schließen</button></p>
         </div>
       )}
 

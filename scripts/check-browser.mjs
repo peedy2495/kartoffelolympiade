@@ -119,6 +119,41 @@ async function adminFetch(page, path, init) {
   }, path, init || null);
 }
 
+// Fail the next POST to path with a simulated 500, then pass everything
+// through. Used to prove mutation errors survive successful auto polls.
+async function failNextPost(page, path) {
+  const handler = async (req) => {
+    try {
+      const url = new URL(req.url());
+      if (req.method() === "POST" && url.pathname === path && !handler.done) {
+        handler.done = true;
+        await req.respond({
+          status: 500,
+          contentType: "application/json",
+          body: JSON.stringify({ error: "INTERNAL", message: "Simulierter Fehler." }),
+        });
+        return;
+      }
+    } catch { /* fall through to continue */ }
+    await req.continue().catch(() => {});
+  };
+  handler.done = false;
+  page.on("request", handler);
+  await page.setRequestInterception(true);
+  return async () => {
+    page.off("request", handler);
+    await page.setRequestInterception(false).catch(() => {});
+  };
+}
+
+async function tooltipVisible(page) {
+  return page.evaluate(() => {
+    const tip = document.querySelector('[role="tooltip"]');
+    if (!tip) return false;
+    return Number(getComputedStyle(tip).opacity) > 0.5;
+  });
+}
+
 let server = null;
 let browser = null;
 try {
@@ -188,6 +223,30 @@ try {
   }
   check("admin opens collection", await hasText(admin, "button", "Erfassung stoppen"));
 
+  // ---- refresh: tooltip on hover/focus, click refetches state ----
+  const refreshBtn = 'button[aria-label="Daten neu laden"]';
+  await admin.waitForSelector(refreshBtn, { timeout: 10000 });
+  check("refresh button has tooltip title", await admin.$eval(refreshBtn, (el) => el.title === "Daten neu laden"));
+  await admin.hover(refreshBtn);
+  await new Promise((r) => setTimeout(r, 600));
+  const tipHover = await tooltipVisible(admin);
+  const tipText = await admin.evaluate(() => document.querySelector('[role="tooltip"]')?.textContent || "");
+  await admin.focus(refreshBtn);
+  await new Promise((r) => setTimeout(r, 600));
+  const tipFocus = await tooltipVisible(admin);
+  check(
+    "refresh tooltip visible on hover and focus, explains reload only",
+    tipHover && tipFocus && tipText.includes("zentralen Daten") && tipText.includes("nichts"),
+    tipText.trim().slice(0, 80),
+  );
+  const stateResponse = admin.waitForResponse(
+    (res) => res.url().includes("/api/gamemaster/state"),
+    { timeout: 15000 },
+  );
+  await admin.click(refreshBtn);
+  await stateResponse;
+  check("manual refresh fetches state, view stays live", await hasText(admin, "button", "Erfassung stoppen"));
+
   // ---- admin: create supervisor A via UI, QR modal Escape ----
   await admin.type('input[aria-label="Name der neuen Aufsicht"]', "Anna Aufsicht");
   await clickText(admin, "button", "Aufsicht anlegen");
@@ -226,6 +285,56 @@ try {
   const tokenA = invA.body.token;
   const tokenB = invB.body.token;
   check("invite tokens issued (not logged)", typeof tokenA === "string" && typeof tokenB === "string" && tokenA !== tokenB);
+
+  // ---- mutation errors survive successful auto polls; retry succeeds ----
+  const stopFail = await failNextPost(admin, "/api/gamemaster/collection");  await clickText(admin, "button", "Erfassung stoppen");
+  await admin.waitForSelector('[role="alert"]', { timeout: 10000 });
+  await new Promise((r) => setTimeout(r, 3600)); // let a 3s auto poll succeed
+  const toggleErrorPersists =
+    await hasText(admin, '[role="alert"]', "Fehler") &&
+    await hasText(admin, "button", "Erfassung stoppen");
+  await stopFail();
+  check("failed collection toggle keeps error after auto poll", toggleErrorPersists);
+  await clickText(admin, "button", "Schließen");
+  await new Promise((r) => setTimeout(r, 400));
+  check("action error dismisses explicitly", !(await hasText(admin, '[role="alert"]', "Fehler")));
+  await clickText(admin, "button", "Erfassung stoppen");
+  await admin.waitForFunction(
+    () => document.body.textContent.includes("Erfassung starten"),
+    { timeout: 15000 },
+  );
+  await clickText(admin, "button", "Erfassung starten");
+  await admin.waitForFunction(
+    () => document.body.textContent.includes("Erfassung stoppen"),
+    { timeout: 15000 },
+  );
+  check("collection toggle retry succeeds, collection open", await hasText(admin, "button", "Erfassung stoppen"));
+
+  const supFail = await failNextPost(admin, "/api/gamemaster/supervisors");
+  await admin.type('input[aria-label="Name der neuen Aufsicht"]', "Retry Aufsicht");
+  await clickText(admin, "button", "Aufsicht anlegen");
+  await admin.waitForSelector('[role="alert"]', { timeout: 10000 });
+  await new Promise((r) => setTimeout(r, 3600)); // let a 3s auto poll succeed
+  const createErrorPersists = await hasText(admin, '[role="alert"]', "Fehler");
+  const namePreserved = await admin.$eval(
+    'input[aria-label="Name der neuen Aufsicht"]',
+    (el) => el.value,
+  );
+  await supFail();
+  check(
+    "failed supervisor create keeps error after auto poll, input preserved",
+    createErrorPersists && namePreserved === "Retry Aufsicht",
+    `input="${namePreserved}"`,
+  );
+  await clickText(admin, "button", "Aufsicht anlegen");
+  await admin.waitForFunction(
+    () => document.body.textContent.includes("Einladung: Retry Aufsicht"),
+    { timeout: 15000 },
+  );
+  const alertCleared = !(await hasText(admin, '[role="alert"]', "Fehler"));
+  await admin.keyboard.press("Escape");
+  await new Promise((r) => setTimeout(r, 500));
+  check("supervisor retry succeeds and clears the error", alertCleared);
 
   // ---- supervisor A: create draft ----
   await supA.goto(`${BASE}/aufsicht/${tokenA}`, { waitUntil: "networkidle0", timeout: 30000 });
