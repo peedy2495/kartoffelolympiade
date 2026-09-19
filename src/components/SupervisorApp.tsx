@@ -1130,23 +1130,8 @@ function EditorView(props: {
           onBlur={props.onBlur}
         />
         {fieldErrors.obstacle && <p className="mt-1 font-semibold" role="alert">{fieldErrors.obstacle}</p>}
-        <div className="mt-2 flex flex-wrap items-center gap-2" data-testid="run-errors-editor">
+        <div className="mt-2 flex flex-col gap-3" data-testid="run-errors-editor">
           <label className="ko-label" htmlFor="ko-run-errors">Fehler</label>
-          <button
-            type="button"
-            className="ko-stepper-btn"
-            aria-label="Fehler verringern"
-            disabled={disabled}
-            onClick={() => {
-              const p = parseRunErrors(props.fieldsRef.current.runErrors);
-              props.onEdit(
-                "runErrors",
-                String(Math.max(0, (p.ok && p.value !== null ? p.value : 0) - 1)),
-              );
-            }}
-          >
-            −
-          </button>
           <input
             id="ko-run-errors"
             className="ko-input text-center"
@@ -1159,21 +1144,38 @@ function EditorView(props: {
             onChange={(e) => props.onEdit("runErrors", e.target.value)}
             onBlur={props.onBlur}
           />
-          <button
-            type="button"
-            className="ko-stepper-btn"
-            aria-label="Fehler erhöhen"
-            disabled={disabled}
-            onClick={() => {
-              const p = parseRunErrors(props.fieldsRef.current.runErrors);
-              props.onEdit(
-                "runErrors",
-                String((p.ok && p.value !== null ? p.value : 0) + 1),
-              );
-            }}
-          >
-            +
-          </button>
+          <div className="flex items-center gap-4">
+            <button
+              type="button"
+              className="ko-stepper-btn"
+              aria-label="Fehler verringern"
+              disabled={disabled}
+              onClick={() => {
+                const p = parseRunErrors(props.fieldsRef.current.runErrors);
+                props.onEdit(
+                  "runErrors",
+                  String(Math.max(0, (p.ok && p.value !== null ? p.value : 0) - 1)),
+                );
+              }}
+            >
+              −
+            </button>
+            <button
+              type="button"
+              className="ko-stepper-btn"
+              aria-label="Fehler erhöhen"
+              disabled={disabled}
+              onClick={() => {
+                const p = parseRunErrors(props.fieldsRef.current.runErrors);
+                props.onEdit(
+                  "runErrors",
+                  String((p.ok && p.value !== null ? p.value : 0) + 1),
+                );
+              }}
+            >
+              +
+            </button>
+          </div>
           <span className="ko-hint">{ERROR_DEDUCTION_TENTHS / 10} s Abzug pro Fehler</span>
         </div>
         {fieldErrors.runErrors && <p className="mt-1 font-semibold" role="alert">{fieldErrors.runErrors}</p>}
