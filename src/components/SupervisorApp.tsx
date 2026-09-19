@@ -1132,19 +1132,7 @@ function EditorView(props: {
         {fieldErrors.obstacle && <p className="mt-1 font-semibold" role="alert">{fieldErrors.obstacle}</p>}
         <div className="mt-2 flex flex-col gap-3" data-testid="run-errors-editor">
           <label className="ko-label" htmlFor="ko-run-errors">Fehler</label>
-          <input
-            id="ko-run-errors"
-            className="ko-input text-center"
-            data-testid="field-run-errors"
-            inputMode="numeric"
-            aria-label="Fehleranzahl"
-            value={fields.runErrors}
-            disabled={disabled}
-            placeholder="0"
-            onChange={(e) => props.onEdit("runErrors", e.target.value)}
-            onBlur={props.onBlur}
-          />
-          <div className="flex items-center gap-4">
+          <div className="grid grid-cols-[44px_minmax(0,1fr)_44px] items-center gap-2">
             <button
               type="button"
               className="ko-stepper-btn"
@@ -1160,6 +1148,18 @@ function EditorView(props: {
             >
               −
             </button>
+            <input
+              id="ko-run-errors"
+              className="ko-input text-center"
+              data-testid="field-run-errors"
+              inputMode="numeric"
+              aria-label="Fehleranzahl"
+              value={fields.runErrors}
+              disabled={disabled}
+              placeholder="0"
+              onChange={(e) => props.onEdit("runErrors", e.target.value)}
+              onBlur={props.onBlur}
+            />
             <button
               type="button"
               className="ko-stepper-btn"
