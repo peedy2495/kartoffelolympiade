@@ -1074,7 +1074,7 @@ function EditorView(props: {
         <h3 className="text-lg font-bold">1. {DISCIPLINE_LABELS_DE.golf}</h3>
         <p className="ko-hint">Schläge — ganze Zahl ab 1.</p>
         {attributionLine("golf")}
-        <div className="mt-2 flex items-center gap-2">
+        <div className="mt-2 grid grid-cols-[44px_minmax(0,1fr)_44px] items-center gap-2">
           <button
             type="button"
             className="ko-stepper-btn"
