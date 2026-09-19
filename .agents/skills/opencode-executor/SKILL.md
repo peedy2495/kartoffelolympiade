@@ -9,6 +9,10 @@ Use delegated execution for substantial implementation and Git delivery. Prefer 
 
 The default workflow is exactly three phases: one focused Codex handoff, one autonomous Muse execution, one report-only Codex closeout. Add another reasoning/execution loop only for a concrete unresolved blocker, failed requested verification, or material plan deviation.
 
+## Binding implementation rules
+
+Every implementation run must follow [references/implementation-rules.md](references/implementation-rules.md). The runner injects this reference into the stable handoff prefix. If a plan assumption is demonstrably false, report BLOCKED with that exact assumption and evidence; do not substitute a different architecture.
+
 ## Before execution
 
 - Resolve only material uncertainty needed for a safe handoff. Do not explore unrelated repository areas.

@@ -37,3 +37,9 @@ CREATE TABLE IF NOT EXISTS ko_results (
   PRIMARY KEY (participant_id, discipline),
   FOREIGN KEY (participant_id) REFERENCES ko_participants(id) ON DELETE CASCADE
 );
+
+CREATE TABLE IF NOT EXISTS ko_run_details (
+  participant_id TEXT PRIMARY KEY,
+  errors INTEGER NOT NULL DEFAULT 0 CHECK (errors >= 0 AND errors <= 1000000),
+  FOREIGN KEY (participant_id) REFERENCES ko_participants(id) ON DELETE CASCADE
+);

@@ -5,6 +5,7 @@ set -euo pipefail
 readonly model='opencode/muse-spark-1.3-contributor-free'
 readonly plan='.agents/PLAN.md'
 readonly report='.agents/IMPLEMENTATION_REPORT.md'
+readonly implementation_rules='.agents/skills/opencode-executor/references/implementation-rules.md'
 readonly report_template='.agents/skills/opencode-executor/references/implementation-report-template.md'
 effort='medium'
 check_only=false
@@ -36,7 +37,7 @@ cd -- "$repo_root"
 command -v git >/dev/null 2>&1 || fail 69 'git is not available on PATH'
 git_root="$(git rev-parse --show-toplevel 2>/dev/null)" || fail 66 'Executor is not inside a Git repository'
 [[ "$(cd -- "$git_root" && pwd -P)" == "$repo_root" ]] || fail 66 'Script layout does not resolve to the repository root'
-for required in "$plan" "$report_template"; do
+for required in "$plan" "$report_template" "$implementation_rules"; do
   [[ -f "$required" && -r "$required" && -s "$required" ]] || fail 66 "Missing, empty or unreadable $repo_root/$required"
 done
 command -v opencode >/dev/null 2>&1 || fail 69 'opencode is not available on PATH; no implementation fallback will run'
@@ -120,8 +121,9 @@ Update .agents/PLAN.md immediately after each completed implementation step or c
 Run only verification requested by the plan. Then self-review actual changed/staged/new files against the plan, acceptance criteria and preserved user work; repair ordinary issues yourself. Never claim skipped or failed checks passed.
 Write the implementation report to .agents/IMPLEMENTATION_REPORT.md using a file tool before finishing; printing it alone does not fulfill the handoff. For authorized Git delivery, record the commit hash, actual push result/destination and remaining worktree changes in the report; reuse prior verification evidence. Keep the implementation report compact and factual: no plan repetition, full diffs, debugging transcript, chronology, or commentary. SUCCESS requires completed planned work, requested checks and self-review. Mark .agents/PLAN.md Completed on SUCCESS. Finish with only the report status and path.
 
-# Implementation report format
 PROMPT
+cat "$implementation_rules" >> "$prompt_file"
+printf '\n# Implementation report format\n' >> "$prompt_file"
 cat "$report_template" >> "$prompt_file"
 printf '\n# Task instructions\n' >> "$prompt_file"
 if ((${#relevant_instructions[@]} == 0)); then

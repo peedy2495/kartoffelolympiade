@@ -418,7 +418,7 @@ try {
   const hitsAfter = await supA.$eval('[data-testid="field-throwing"]', (el) => el.value);
   check(
     "60s countdown ticks/pauses/resets to 60s, explicit reset clears hits (no full-minute wait)",
-    cdText !== null && !cdText.includes("60,0") && cdReset.includes("60,0") && hitsBefore !== "" && hitsAfter === "",
+    cdText !== null && !cdText.includes("60,0") && cdReset.includes("1 min 00,0") && hitsBefore !== "" && hitsAfter === "",
     `${cdText} -> ${cdReset}, hits ${hitsBefore}->blank`,
   );
   // Restore throwing for the save flow (reset cleared it by design).
@@ -540,7 +540,7 @@ try {
   const resetCountdown = await supA.$eval('[data-testid="countdown-display"]', (el) => el.textContent);
   check(
     "reset during pending PATCH stays blank after save+poll, countdown back at 60s",
-    resetDuring === "" && resetSurvived === "" && resetCountdown.includes("60,0"),
+    resetDuring === "" && resetSurvived === "" && resetCountdown.includes("1 min 00,0"),
     `during "${resetDuring}" after "${resetSurvived}" cd "${resetCountdown}"`,
   );
   // Server + second supervisor confirm the clear persisted (no restore).

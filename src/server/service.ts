@@ -189,6 +189,10 @@ export async function adminDeleteParticipant(
     args: [participantId],
   });
   await db.execute({
+    sql: "DELETE FROM ko_run_details WHERE participant_id = ?",
+    args: [participantId],
+  });
+  await db.execute({
     sql: "DELETE FROM ko_participants WHERE id = ?",
     args: [participantId],
   });
@@ -304,6 +308,7 @@ export interface PatchBody {
   name?: unknown;
   age_group?: unknown;
   results?: unknown;
+  run_errors?: unknown;
 }
 
 function parsePatchResults(
@@ -361,6 +366,21 @@ export async function supervisorPatchParticipant(
     if (typeof v === "number" && (v < 0 || v > MAX_INPUT_VALUE))
       throw err(400, "INVALID", "Wert außerhalb des Bereichs.");
   }
+  let cleanErrors: number | null = null;
+  if (body.run_errors !== undefined) {
+    if (
+      typeof body.run_errors !== "number" ||
+      !Number.isInteger(body.run_errors) ||
+      body.run_errors < 0 ||
+      body.run_errors > MAX_INPUT_VALUE
+    )
+      throw err(
+        400,
+        "INVALID",
+        "run_errors muss eine ganze Zahl von 0 bis 1000000 sein.",
+      );
+    cleanErrors = body.run_errors;
+  }
   const tx = await beginWrite(db as Client);
   let committed = false;
   try {
@@ -397,7 +417,14 @@ export async function supervisorPatchParticipant(
         }
       }
     }
-    if (!metaChanged && changedResults.length === 0 && clearedResults.length === 0) {
+    const prevErrors = p.runErrors ?? 0;
+    const errorsChanged = cleanErrors !== null && cleanErrors !== prevErrors;
+    if (
+      !metaChanged &&
+      changedResults.length === 0 &&
+      clearedResults.length === 0 &&
+      !errorsChanged
+    ) {
       // No-op patch: touch nothing, return current record.
       committed = true;
       await endTx(tx, true);
@@ -422,6 +449,23 @@ export async function supervisorPatchParticipant(
         sql: "DELETE FROM ko_results WHERE participant_id = ? AND discipline = ?",
         args: [participantId, d],
       });
+    }
+    if (errorsChanged) {
+      await tx.execute({
+        sql: "INSERT INTO ko_run_details (participant_id, errors) VALUES (?, ?) ON CONFLICT (participant_id) DO UPDATE SET errors = excluded.errors",
+        args: [participantId, cleanErrors as number],
+      });
+      const obstacleChanged =
+        changedResults.some(([d]) => d === "obstacle") ||
+        clearedResults.includes("obstacle");
+      if (!obstacleChanged) {
+        // Count-only change: the composite Kartoffellauf entry is considered
+        // last edited by this writer when a raw run time exists.
+        await tx.execute({
+          sql: "UPDATE ko_results SET supervisor_id = ?, supervisor_name = ?, updated_at = ? WHERE participant_id = ? AND discipline = 'obstacle'",
+          args: [sup.id, sup.name, now, participantId],
+        });
+      }
     }
     const updated = await findParticipant(tx, participantId);
     if (!updated) throw err(404, "NOT_FOUND", "Teilnehmer nicht gefunden.");

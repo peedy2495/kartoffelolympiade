@@ -29,6 +29,7 @@ export function rowToSupervisorWithToken(
 }
 
 export function rowToParticipant(row: Record<string, unknown>): Participant {
+  const errors = row["errors"];
   return {
     id: String(row["id"]),
     name: String(row["name"]),
@@ -41,6 +42,8 @@ export function rowToParticipant(row: Record<string, unknown>): Participant {
       row["finalized_at"] === null || row["finalized_at"] === undefined
         ? null
         : String(row["finalized_at"]),
+    runErrors:
+      errors === null || errors === undefined ? 0 : Number(errors),
   };
 }
 
@@ -72,7 +75,7 @@ export async function getCollectionOpen(db: Executor): Promise<boolean> {
 
 export async function listParticipants(db: Executor): Promise<Participant[]> {
   const rs = await db.execute({
-    sql: "SELECT * FROM ko_participants ORDER BY created_at ASC, id ASC",
+    sql: "SELECT p.*, d.errors AS errors FROM ko_participants p LEFT JOIN ko_run_details d ON d.participant_id = p.id ORDER BY p.created_at ASC, p.id ASC",
     args: [],
   });
   return rs.rows.map((r) => rowToParticipant(r as Record<string, unknown>));
@@ -130,7 +133,7 @@ export async function findParticipant(
   id: string,
 ): Promise<Participant | null> {
   const rs = await db.execute({
-    sql: "SELECT * FROM ko_participants WHERE id = ? LIMIT 1",
+    sql: "SELECT p.*, d.errors AS errors FROM ko_participants p LEFT JOIN ko_run_details d ON d.participant_id = p.id WHERE p.id = ? LIMIT 1",
     args: [id],
   });
   const row = rs.rows[0] as Record<string, unknown> | undefined;

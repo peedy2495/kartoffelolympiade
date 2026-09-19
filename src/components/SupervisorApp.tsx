@@ -15,9 +15,10 @@ import {
   formatTenthsToGerman,
   parseTimeInputToTenths,
 } from "../lib/validation.js";
+import { effectiveRunTenths, ERROR_DEDUCTION_TENTHS, formatDurationTenths, tenthsFromMillis } from "../lib/time.js";
 import { supervisorApi } from "../lib/api.js";
 
-type FieldKey = "name" | "age" | Discipline;
+type FieldKey = "name" | "age" | Discipline | "runErrors";
 type SaveStatus = "idle" | "saving" | "saved" | "error";
 
 interface EditorFields {
@@ -27,6 +28,7 @@ interface EditorFields {
   obstacle: string;
   throwing: string;
   peeling: string;
+  runErrors: string;
 }
 
 const EMPTY: EditorFields = {
@@ -36,6 +38,7 @@ const EMPTY: EditorFields = {
   obstacle: "",
   throwing: "",
   peeling: "",
+  runErrors: "0",
 };
 
 function parseCount(raw: string, min: number): { ok: boolean; value: number | null } {
@@ -44,6 +47,16 @@ function parseCount(raw: string, min: number): { ok: boolean; value: number | nu
   if (!/^\d+$/.test(t)) return { ok: false, value: null };
   const v = Number(t);
   if (!Number.isInteger(v) || v < min || v > 1_000_000)
+    return { ok: false, value: null };
+  return { ok: true, value: v };
+}
+
+function parseRunErrors(raw: string): { ok: boolean; value: number | null } {
+  const t = raw.trim();
+  // Blank is invalid: the counter default is 0 and stays explicit.
+  if (!/^\d+$/.test(t)) return { ok: false, value: null };
+  const v = Number(t);
+  if (!Number.isInteger(v) || v < 0 || v > 1_000_000)
     return { ok: false, value: null };
   return { ok: true, value: v };
 }
@@ -76,6 +89,7 @@ function serverFields(
       r.peeling?.value !== undefined
         ? formatTenthsToGerman(r.peeling.value)
         : "",
+    runErrors: p.runErrors !== undefined ? String(p.runErrors) : "0",
   };
 }
 
@@ -233,7 +247,7 @@ export function SupervisorApp({ token }: { token: string }) {
   const editorGen = useRef(0);
   const editCounter = useRef(0);
   const fieldGen = useRef<Record<FieldKey, number>>({
-    name: 0, age: 0, golf: 0, obstacle: 0, throwing: 0, peeling: 0,
+    name: 0, age: 0, golf: 0, obstacle: 0, throwing: 0, peeling: 0, runErrors: 0,
   });
   const pendingWrites = useRef(0);
   const dirtyRef = useRef(dirty);
@@ -399,6 +413,7 @@ export function SupervisorApp({ token }: { token: string }) {
         const sentBase: Partial<EditorFields> = {};
         let name: string | undefined;
         let age: AgeGroup | undefined;
+        let runErrors: number | undefined;
         if (keys.has("name")) {
           const t = f.name.trim().replace(/\s+/g, " ");
           if (t.length < 1 || t.length > 100) errs.name = "Name muss 1–100 Zeichen haben.";
@@ -436,13 +451,30 @@ export function SupervisorApp({ token }: { token: string }) {
             sentBase[d] = "";
           }
         }
+        if (keys.has("runErrors")) {
+          const parsed = parseRunErrors(f.runErrors);
+          if (!parsed.ok) {
+            errs.runErrors = "Ganze Zahl ab 0.";
+          } else if (
+            parsed.value !== null &&
+            parsed.value !== Number(baseSnapshot.current.runErrors)
+          ) {
+            runErrors = parsed.value;
+            sentBase.runErrors = String(parsed.value);
+          }
+        }
         if (Object.keys(errs).length > 0) {
           setFieldErrors((fe) => ({ ...fe, ...errs }));
           setSaveStatus("error");
           setSaveError("Bitte Eingaben prüfen.");
           return;
         }
-        if (name === undefined && age === undefined && Object.keys(results).length === 0) {
+        if (
+          name === undefined &&
+          age === undefined &&
+          runErrors === undefined &&
+          Object.keys(results).length === 0
+        ) {
           const n = new Set(dirtyRef.current);
           for (const k of keys) n.delete(k);
           dirtyRef.current = n;
@@ -459,6 +491,7 @@ export function SupervisorApp({ token }: { token: string }) {
             ...(name !== undefined ? { name } : {}),
             ...(age !== undefined ? { age_group: age } : {}),
             ...(Object.keys(results).length > 0 ? { results } : {}),
+            ...(runErrors !== undefined ? { run_errors: runErrors } : {}),
           });
           // Late response for a previous participant session never mutates
           // the new editor.
@@ -821,6 +854,7 @@ export function SupervisorApp({ token }: { token: string }) {
           onEdit={editField}
           onBlur={() => flush()}
           onBack={() => selectParticipant(null)}
+          fieldsRef={fieldsRef}
           onRetryDirty={() => flush(new Set(dirtyRef.current))}
           onDiscard={() => {
             const rec = server.participants.find((p) => p.id === selected.id);
@@ -853,6 +887,30 @@ export function SupervisorApp({ token }: { token: string }) {
   );
 }
 
+function RunPreview({ fields }: { fields: EditorFields }) {
+  const raw = parseField("obstacle", fields.obstacle);
+  const errors = parseRunErrors(fields.runErrors);
+  const effective =
+    raw.ok && raw.value !== null && errors.ok && errors.value !== null
+      ? effectiveRunTenths(raw.value, errors.value)
+      : null;
+  const formula = `Ergebniszeit = Laufzeit − Fehler × ${ERROR_DEDUCTION_TENTHS / 10} s`;
+  return (
+    <p className="ko-hint mt-2" data-testid="run-preview">
+      {effective === null ? (
+        formula
+      ) : (
+        <>
+          {formula}:{" "}
+          <span className="ko-badge" data-testid="run-preview-value">
+            {formatDurationTenths(effective)}
+          </span>
+        </>
+      )}
+    </p>
+  );
+}
+
 function EditorView(props: {
   participant: Participant;
   fields: EditorFields;
@@ -867,6 +925,7 @@ function EditorView(props: {
   onBack: () => void;
   onRetryDirty: () => void;
   onDiscard: () => void;
+  fieldsRef: { current: EditorFields };
   swObstacle: ReturnType<typeof useStopwatch>;
   swPeeling: ReturnType<typeof useStopwatch>;
   cdThrow: ReturnType<typeof useCountdown>;
@@ -889,7 +948,7 @@ function EditorView(props: {
     return (
       <div className="mt-2 flex flex-wrap items-center gap-2" data-testid={testid}>
         <span className="ko-badge" aria-live="polite">
-          {(sw.elapsed / 1000).toFixed(1).replace(".", ",")} s
+          {formatDurationTenths(tenthsFromMillis(sw.elapsed))}
         </span>
         {!sw.running ? (
           <button type="button" className="ko-btn" disabled={disabled} onClick={sw.start}>
@@ -1063,7 +1122,7 @@ function EditorView(props: {
           className="ko-input mt-2"
           data-testid="field-obstacle"
           inputMode="decimal"
-          aria-label="Zeit Hindernisparcours in Sekunden"
+          aria-label="Zeit Kartoffellauf in Sekunden"
           value={fields.obstacle}
           disabled={disabled}
           placeholder="z. B. 12,3"
@@ -1071,7 +1130,55 @@ function EditorView(props: {
           onBlur={props.onBlur}
         />
         {fieldErrors.obstacle && <p className="mt-1 font-semibold" role="alert">{fieldErrors.obstacle}</p>}
+        <div className="mt-2 flex flex-wrap items-center gap-2" data-testid="run-errors-editor">
+          <label className="ko-label" htmlFor="ko-run-errors">Fehler</label>
+          <button
+            type="button"
+            className="ko-stepper-btn"
+            aria-label="Fehler verringern"
+            disabled={disabled}
+            onClick={() => {
+              const p = parseRunErrors(props.fieldsRef.current.runErrors);
+              props.onEdit(
+                "runErrors",
+                String(Math.max(0, (p.ok && p.value !== null ? p.value : 0) - 1)),
+              );
+            }}
+          >
+            −
+          </button>
+          <input
+            id="ko-run-errors"
+            className="ko-input text-center"
+            data-testid="field-run-errors"
+            inputMode="numeric"
+            aria-label="Fehleranzahl"
+            value={fields.runErrors}
+            disabled={disabled}
+            placeholder="0"
+            onChange={(e) => props.onEdit("runErrors", e.target.value)}
+            onBlur={props.onBlur}
+          />
+          <button
+            type="button"
+            className="ko-stepper-btn"
+            aria-label="Fehler erhöhen"
+            disabled={disabled}
+            onClick={() => {
+              const p = parseRunErrors(props.fieldsRef.current.runErrors);
+              props.onEdit(
+                "runErrors",
+                String((p.ok && p.value !== null ? p.value : 0) + 1),
+              );
+            }}
+          >
+            +
+          </button>
+          <span className="ko-hint">{ERROR_DEDUCTION_TENTHS / 10} s Abzug pro Fehler</span>
+        </div>
+        {fieldErrors.runErrors && <p className="mt-1 font-semibold" role="alert">{fieldErrors.runErrors}</p>}
         {stopwatchBlock("obstacle", props.swObstacle, "stopwatch-obstacle")}
+        <RunPreview fields={fields} />
       </section>
 
       <section className="ko-card p-4 sm:p-5" aria-label={DISCIPLINE_LABELS_DE.throwing}>
@@ -1120,7 +1227,7 @@ function EditorView(props: {
           <span className="ko-badge" aria-live="polite" data-testid="countdown-display">
             {props.cdThrow.finished
               ? "Zeit um!"
-              : `${(props.cdThrow.remaining / 1000).toFixed(1).replace(".", ",")} s`}
+              : formatDurationTenths(tenthsFromMillis(props.cdThrow.remaining))}
           </span>
           {!props.cdThrow.running ? (
             <button type="button" className="ko-btn" disabled={disabled} onClick={props.cdThrow.start}>

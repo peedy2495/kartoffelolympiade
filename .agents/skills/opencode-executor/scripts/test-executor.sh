@@ -10,7 +10,7 @@ trap 'rm -rf -- "$fixture"' EXIT
 repo="$fixture/repo with spaces"
 mkdir -p "$repo/.agents/skills/opencode-executor/scripts" "$repo/.agents/skills/opencode-executor/references" "$repo/.agents/skills/testing" "$fixture/bin"
 cp "$script_dir/execute-plan.sh" "$script_dir/recover-report.mjs" "$repo/.agents/skills/opencode-executor/scripts/"
-cp "$script_dir/../references/implementation-report-template.md" "$repo/.agents/skills/opencode-executor/references/"
+cp "$script_dir/../references/implementation-report-template.md" "$script_dir/../references/implementation-rules.md" "$repo/.agents/skills/opencode-executor/references/"
 printf '# Fixture testing skill\n\nStable fixture instructions.\n' > "$repo/.agents/skills/testing/SKILL.md"
 git init -q "$repo"
 runner="$repo/.agents/skills/opencode-executor/scripts/execute-plan.sh"
@@ -122,6 +122,10 @@ mapfile -d '' -t invocation < "$EXECUTOR_TEST_CAPTURE"
 [[ "${invocation[11]}" == *'Never use hard-coded /tmp paths'* ]]
 [[ "${invocation[11]}" == *'Perform Git delivery only when the task plan records user authorization'* ]]
 [[ "${invocation[11]}" == *'Update .agents/PLAN.md immediately after each completed implementation step or check'* ]]
+while IFS= read -r rule; do
+  [[ "$rule" == '- '* ]] || continue
+  [[ "${invocation[11]}" == *"$rule"* ]] || { printf 'Missing injected rule: %s\n' "$rule" >&2; exit 1; }
+done < "$repo/.agents/skills/opencode-executor/references/implementation-rules.md"
 # Old SUCCESS must not survive a run which fails to produce a report.
 export EXECUTOR_TEST_REPORT=unchanged
 expect_exit 3 "$bash_bin" "$runner"

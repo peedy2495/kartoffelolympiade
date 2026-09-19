@@ -80,6 +80,7 @@ export const supervisorApi = {
       name?: string;
       age_group?: AgeGroup;
       results?: Partial<Record<Discipline, number | null>>;
+      run_errors?: number;
     },
   ) =>
     req<Participant>(`/api/participants/${encodeURIComponent(id)}`, {

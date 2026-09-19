@@ -34,6 +34,8 @@ export interface Participant {
   createdAt: string;
   updatedAt: string;
   finalizedAt: string | null;
+  /** Saved Kartoffellauf error count; missing means 0 (old rows, fixtures). */
+  runErrors?: number;
 }
 
 export interface Supervisor {
@@ -70,7 +72,7 @@ export interface SupervisorState {
 
 export const DISCIPLINE_LABELS_DE: Record<Discipline, string> = {
   golf: "Kartoffel-Golf",
-  obstacle: "Hindernisparcours",
+  obstacle: "Kartoffellauf",
   throwing: "7-m-Werfen",
   peeling: "Kartoffelschälen",
 };

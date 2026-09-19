@@ -4,24 +4,21 @@ SUCCESS
 
 # Implemented
 
-- Autosave/poll ordering-safe: sent-value baselines, per-field generations, stale-revision guards, no false conflicts; explicit reset clears stored values via null protocol.
-- Server PATCH accepts explicit null as DELETE in the revision-checked transaction; per-card "Zuletzt erfasst von / Noch kein Eintrag" attribution.
-- Admin deletions via centered Base UI viewport modal with in-popup retry and single-DELETE guard; 44px theme toggle with sun/moon; timer icons; Kartoffelfeuer naming.
-- Regression coverage: 3 null-clear integration tests; 23 new deterministic interception-based browser checks (55 total).
-- README documents modal, attribution, reset clearing, robust saves.
+- One new local commit on main with the exact planned message "Improve scoring and run controls".
+- Committed all intended task work: source, tests, scripts, README and .agents skill/plan/report files; no .env, artifacts or build outputs staged.
+- Updated .agents/PLAN.md to Completed and wrote this report; both folded into the same commit via amend.
+- No push performed.
 
 # Changed Files
 
-- src/components/SupervisorApp.tsx, src/components/AdminApp.tsx, src/components/Layout.astro, src/styles/global.css, src/lib/api.ts, src/server/service.ts, tests/integration.test.ts, scripts/check-browser.mjs, README.md
+- .agents/IMPLEMENTATION_REPORT.md, .agents/PLAN.md, .agents/skills/opencode-executor/SKILL.md, .agents/skills/opencode-executor/references/implementation-rules.md, .agents/skills/opencode-executor/scripts/execute-plan.sh, .agents/skills/opencode-executor/scripts/test-executor.sh, README.md, scripts/check-browser.mjs, scripts/check-browser-run.mjs, src/components/AdminApp.tsx, src/components/SupervisorApp.tsx, src/lib/api.ts, src/lib/contracts.ts, src/lib/rankings.ts, src/lib/time.ts, src/pages/api/[...path].ts, src/pages/index.astro, src/server/repository.ts, src/server/schema.sql, src/server/service.ts, tests/integration.test.ts, tests/rankings.test.ts, tests/time.test.ts
 
 # Verification
 
-- `npm test` — passed (48/48, incl. 3 new null-clear tests).
-- `npm run build` — passed.
-- `node scripts/check-browser.mjs` — passed (55/55).
-- `node scripts/smoke-built-mutations.mjs` — passed (7/7).
-- `git diff --check` — passed.
-- Self-review — passed (scope-only diff, prior tooltip user work preserved).
+- git diff --check — passed (no whitespace errors).
+- git status/diff review + staged path review — passed (only intended files; no secrets/disposable files).
+- Commit + amend (final commit is HEAD) — passed; git status --short clean.
+- Prior verification reused, no test execution — not run (delivery-only per plan).
 
 # Plan Deviations
 

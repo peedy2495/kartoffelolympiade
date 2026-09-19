@@ -1,7 +1,7 @@
 # Kartoffelolympiade
 
 German responsive event scoring app for the Kartoffelfeuer: four disciplines
-(Kartoffel-Golf, Hindernisparcours, 7-m-Werfen, Kartoffelschälen), two age
+(Kartoffel-Golf, Kartoffellauf, 7-m-Werfen, Kartoffelschälen), two age
 groups (bis 14 / über 14), central Turso persistence.
 
 - Supervisors (`/aufsicht/TOKEN`) share draft participants, autosave results
@@ -11,7 +11,9 @@ groups (bis 14 / über 14), central Turso persistence.
   Public pages link nowhere near management; the page asks search engines
   not to index it.
 - Rankings per age group use competition ranks (1, 1, 3); overall score is
-  the sum of the four discipline ranks — lower is better.
+  the sum of the four discipline ranks — lower is better. Example: ranks
+  1 + 3 + 2 + 1 = 7. Equal sums are broken by counting first places, then
+  seconds, then thirds; only a fully tied sporting tuple shares the place.
 
 ## Setup
 
@@ -100,4 +102,12 @@ error message until dismissed or retried.
 - Server is authoritative: revision-checked drafts, collection gate and token
   checks run inside write transactions; supervisors only see shared drafts.
 - Times are entered in German format (`12,3`), stored as tenths of a second.
+- Read-only time displays use a compact German duration format that hides
+  unused leading units (`12,3 s`, `1 min 00,0 s`, `1 h 02 min 03,4 s`);
+  inner zero fields stay visible and the stored tenths value is unchanged.
+- Kartoffellauf: each saved error subtracts 3 s from the raw run time
+  (`Ergebniszeit = Laufzeit − Fehler × 3 s`). Raw time and error count are
+  saved separately and are both visible in the overview; the effective time
+  is computed for display and ranking and can be negative when deductions
+  exceed the run time.
 - See `AGENTS.md` for the contributor workflow.

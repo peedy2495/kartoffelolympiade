@@ -145,6 +145,7 @@ export const ALL: APIRoute = async ({ request }) => {
         name?: unknown;
         age_group?: unknown;
         results?: unknown;
+        run_errors?: unknown;
       };
       return json(await supervisorPatchParticipant(token, seg[1], body, client));
     }

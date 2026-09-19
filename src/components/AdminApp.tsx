@@ -14,14 +14,14 @@ import type {
   Participant,
 } from "../lib/contracts.js";
 import { AGE_GROUP_LABELS_DE, DISCIPLINE_LABELS_DE, DISCIPLINES } from "../lib/contracts.js";
-import { formatTenthsToGerman } from "../lib/validation.js";
 import { disciplineLeaders, rankAgeGroups } from "../lib/rankings.js";
+import { effectiveRunTenths, ERROR_DEDUCTION_TENTHS, formatDurationTenths } from "../lib/time.js";
 import { adminApi, inviteUrl } from "../lib/api.js";
 import { QrModal } from "./QrModal.js";
 
 function rawValue(d: Discipline, v: number | undefined): string {
   if (v === undefined) return "–";
-  if (d === "obstacle" || d === "peeling") return `${formatTenthsToGerman(v)} s`;
+  if (d === "obstacle" || d === "peeling") return formatDurationTenths(v);
   if (d === "golf") return `${v}`;
   return `${v}`;
 }
@@ -295,6 +295,26 @@ export function AdminApp() {
                     <td>{AGE_GROUP_LABELS_DE[p.ageGroup]}</td>
                     {DISCIPLINES.map((d) => {
                       const r = state.results[p.id]?.[d];
+                      if (d === "obstacle") {
+                        const raw = r?.value;
+                        const errors = p.runErrors ?? 0;
+                        const eff =
+                          raw !== undefined
+                            ? effectiveRunTenths(raw, errors)
+                            : null;
+                        return (
+                          <td key={d}>
+                            <div>Laufzeit: {raw !== undefined ? formatDurationTenths(raw) : "–"}</div>
+                            <div className="ko-hint text-sm">Fehler: {errors}</div>
+                            <div className="ko-hint text-sm">
+                              Ergebniszeit: {eff !== null ? formatDurationTenths(eff) : "–"}
+                            </div>
+                            {r?.supervisorName && (
+                              <div className="ko-hint text-sm">⛹ {r.supervisorName}</div>
+                            )}
+                          </td>
+                        );
+                      }
                       return (
                         <td key={d}>
                           <div>{rawValue(d, r?.value)}</div>
@@ -405,7 +425,11 @@ export function AdminApp() {
         <h2 className="text-lg font-bold">Bestenlisten</h2>
         <p className="ko-hint mt-1">
           Gesamtwertung: Summe der vier Disziplin-Platzierungen — je kleiner, desto besser.
-          Bei Gleichstand teilen sich Teilnehmer den Platz.
+          Bei gleicher Summe zählen zuerst die ersten Plätze, dann die zweiten, dann die
+          dritten Plätze. Erst ein kompletter Gleichstand teilt sich den Platz.
+        </p>
+        <p className="ko-hint mt-1">
+          Kartoffellauf: Ergebniszeit = Laufzeit − Fehler × {ERROR_DEDUCTION_TENTHS / 10} s (berechnet, kann negativ sein).
         </p>
         <div className="mt-4 grid gap-4 lg:grid-cols-2">
           {rankings.map((g) => (
